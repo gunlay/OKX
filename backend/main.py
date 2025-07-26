@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import threading
 import json
 import logging
+import os
 from fastapi.middleware.cors import CORSMiddleware
 
 # 导入自定义模块
@@ -17,12 +18,15 @@ from models import Base, UserConfig, DCAPlan, Transaction, encrypt_text, decrypt
 from okx_api import OKXClient, get_popular_coins_public
 
 # 配置日志
+log_dir = os.path.dirname(os.path.abspath(__file__))
+log_file = os.path.join(log_dir, 'dca_service.log')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('dca_service.log')
+        logging.FileHandler(log_file)
     ]
 )
 logger = logging.getLogger("dca-service")
@@ -171,6 +175,7 @@ def schedule_task(plan):
     # 如果已存在任务，先移除
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
+        logger.info(f"移除现有任务调度 {job_id}")
     
     # 如果任务已禁用，不再调度
     if plan.status != "enabled":
@@ -178,15 +183,21 @@ def schedule_task(plan):
         return
     
     # 解析时间
-    hour, minute = plan.time.split(":")
+    try:
+        hour, minute = plan.time.split(":")
+        hour = int(hour)
+        minute = int(minute)
+    except (ValueError, TypeError) as e:
+        logger.error(f"任务 {plan.id} 时间格式错误: {plan.time}, 错误: {str(e)}")
+        return
     
     # 根据频率创建触发器
     if plan.frequency == "daily":
         trigger = CronTrigger(hour=hour, minute=minute)
-        logger.info(f"任务 {plan.id} 调度为每天 {plan.time}")
+        logger.info(f"任务 {plan.id} 调度为每天 {hour:02d}:{minute:02d}")
     elif plan.frequency == "weekly" and plan.day_of_week is not None:
         trigger = CronTrigger(day_of_week=plan.day_of_week, hour=hour, minute=minute)
-        logger.info(f"任务 {plan.id} 调度为每周 {plan.day_of_week} {plan.time}")
+        logger.info(f"任务 {plan.id} 调度为每周 {plan.day_of_week} {hour:02d}:{minute:02d}")
     elif plan.frequency == "monthly":
         if plan.month_days and len(plan.month_days) > 0:
             try:
@@ -196,6 +207,7 @@ def schedule_task(plan):
                     day_job_id = f"dca_task_{plan.id}_day_{day}"
                     if scheduler.get_job(day_job_id):
                         scheduler.remove_job(day_job_id)
+                        logger.info(f"移除现有月度任务调度 {day_job_id}")
                     
                     day_trigger = CronTrigger(day=day, hour=hour, minute=minute)
                     scheduler.add_job(
@@ -205,19 +217,19 @@ def schedule_task(plan):
                         id=day_job_id,
                         replace_existing=True
                     )
-                    logger.info(f"任务 {plan.id} 调度为每月 {day}日 {plan.time}")
+                    logger.info(f"任务 {plan.id} 调度为每月 {day}日 {hour:02d}:{minute:02d}, job_id={day_job_id}")
                 
                 # 已经为每个日期创建了单独的任务，不需要再创建主任务
                 return
             except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"解析月份日期失败: {e}")
+                logger.error(f"解析月份日期失败: {str(e)}, 原始数据: {plan.month_days}")
                 # 如果解析失败，回退到默认行为：每月1日执行
                 trigger = CronTrigger(day=1, hour=hour, minute=minute)
-                logger.info(f"任务 {plan.id} 调度为每月1日 {plan.time}")
+                logger.info(f"任务 {plan.id} 解析月份日期失败，回退到每月1日 {hour:02d}:{minute:02d}")
         else:
             # 如果没有指定日期，默认每月1日执行
             trigger = CronTrigger(day=1, hour=hour, minute=minute)
-            logger.info(f"任务 {plan.id} 调度为每月1日 {plan.time}")
+            logger.info(f"任务 {plan.id} 调度为每月1日 {hour:02d}:{minute:02d}")
     else:
         logger.error(f"任务 {plan.id} 频率配置错误: {plan.frequency}")
         return
@@ -230,6 +242,15 @@ def schedule_task(plan):
         id=job_id,
         replace_existing=True
     )
+    logger.info(f"成功添加任务调度 {job_id}")
+
+# 打印所有调度任务
+def print_all_jobs():
+    jobs = scheduler.get_jobs()
+    logger.info(f"当前共有 {len(jobs)} 个调度任务:")
+    for job in jobs:
+        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "未调度"
+        logger.info(f"任务ID: {job.id}, 下次执行时间: {next_run}, 触发器: {job.trigger}")
 
 # 初始化所有任务的调度
 def init_scheduler():
@@ -240,6 +261,8 @@ def init_scheduler():
         for plan in plans:
             schedule_task(plan)
         logger.info(f"成功调度 {len(plans)} 个定投任务")
+        # 打印所有调度任务
+        print_all_jobs()
     except Exception as e:
         logger.exception(f"初始化定时任务异常: {str(e)}")
     finally:
@@ -262,6 +285,10 @@ def create_dca_plan(plan: DCAPlanCreate):
     
     # 调度任务
     schedule_task(db_plan)
+    logger.info(f"创建新任务: {db_plan.id}, 币种: {db_plan.symbol}, 金额: {db_plan.amount}, 频率: {db_plan.frequency}")
+    
+    # 打印所有调度任务
+    print_all_jobs()
     
     return db_plan
 
@@ -278,6 +305,8 @@ def update_dca_plan(plan_id: int, plan: DCAPlanCreate):
     if not db_plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
+    logger.info(f"更新任务 {plan_id}: 币种: {plan.symbol}, 金额: {plan.amount}, 频率: {plan.frequency}")
+    
     for key, value in plan.dict().items():
         setattr(db_plan, key, value)
     
@@ -286,6 +315,9 @@ def update_dca_plan(plan_id: int, plan: DCAPlanCreate):
     
     # 更新调度
     schedule_task(db_plan)
+    
+    # 打印所有调度任务
+    print_all_jobs()
     
     return db_plan
 
@@ -300,10 +332,27 @@ def delete_dca_plan(plan_id: int):
     job_id = f"dca_task_{plan_id}"
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
+        logger.info(f"移除任务调度 {job_id}")
+    
+    # 如果是月度任务，还需要移除每个日期的单独任务
+    if db_plan.frequency == "monthly" and db_plan.month_days:
+        try:
+            month_days = json.loads(db_plan.month_days)
+            for day in month_days:
+                day_job_id = f"dca_task_{plan_id}_day_{day}"
+                if scheduler.get_job(day_job_id):
+                    scheduler.remove_job(day_job_id)
+                    logger.info(f"移除月度任务调度 {day_job_id}")
+        except (json.JSONDecodeError, ValueError):
+            pass
     
     # 删除计划
+    logger.info(f"删除任务 {plan_id}")
     db.delete(db_plan)
     db.commit()
+    
+    # 打印所有调度任务
+    print_all_jobs()
     
     return {"ok": True}
 
@@ -317,11 +366,15 @@ def update_plan_status(plan_id: int, status: str = Body(..., embed=True)):
     if not db_plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
+    logger.info(f"更新任务 {plan_id} 状态为 {status}")
     db_plan.status = status
     db.commit()
     
     # 更新调度
     schedule_task(db_plan)
+    
+    # 打印所有调度任务
+    print_all_jobs()
     
     return {"id": plan_id, "status": status}
 
