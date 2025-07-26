@@ -51,8 +51,14 @@
     <div class="config-section">
       <h3>交易币种配置</h3>
       <div class="form-group">
-        <label>选择交易币种:</label>
-        <div class="coin-grid">
+        <div class="coin-header">
+          <label>选择交易币种:</label>
+          <button @click="loadPopularCoins" class="refresh-btn" :disabled="loadingCoins">
+            {{ loadingCoins ? '加载中...' : '获取热门币种' }}
+          </button>
+        </div>
+        <div v-if="loadingCoins" class="loading-spinner"></div>
+        <div v-else class="coin-grid">
           <div 
             v-for="coin in availableCoins" 
             :key="coin"
@@ -105,13 +111,10 @@ export default {
         passphrase: ''
       },
       selectedCoins: [],
-      availableCoins: [
-        'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'ADA-USDT', 'SOL-USDT',
-        'DOT-USDT', 'DOGE-USDT', 'AVAX-USDT', 'MATIC-USDT', 'LINK-USDT',
-        'UNI-USDT', 'LTC-USDT', 'BCH-USDT', 'XLM-USDT', 'ATOM-USDT'
-      ],
+      availableCoins: [],
       loading: false,
       testing: false,
+      loadingCoins: false,
       apiMessage: '',
       apiMessageType: '',
       coinMessage: '',
@@ -142,6 +145,14 @@ export default {
         const coinResponse = await configApi.getCoinConfig();
         if (coinResponse.data) {
           this.selectedCoins = coinResponse.data;
+        }
+        
+        // 如果没有选择币种，加载热门币种
+        if (!this.selectedCoins.length) {
+          await this.loadPopularCoins();
+        } else if (!this.availableCoins.length) {
+          // 确保有可用币种列表
+          this.availableCoins = [...this.selectedCoins];
         }
         
         this.showMessage('配置加载成功', 'success', 'api');
@@ -226,6 +237,36 @@ export default {
         this.showMessage(msg, 'error', 'api');
       } finally {
         this.testing = false;
+      }
+    },
+    
+    async loadPopularCoins() {
+      try {
+        this.loadingCoins = true;
+        this.coinMessage = '';
+        
+        const response = await configApi.getPopularCoins(100);
+        if (response.data && response.data.length) {
+          this.availableCoins = response.data;
+          this.showMessage('获取热门币种成功', 'success', 'coin');
+        } else {
+          // 如果API返回空，使用默认币种
+          this.availableCoins = [
+            'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'ADA-USDT', 'SOL-USDT',
+            'DOT-USDT', 'DOGE-USDT', 'AVAX-USDT', 'MATIC-USDT', 'LINK-USDT'
+          ];
+          this.showMessage('未获取到热门币种，已加载默认币种', 'warning', 'coin');
+        }
+      } catch (error) {
+        console.error('获取热门币种失败:', error);
+        // 加载失败时使用默认币种
+        this.availableCoins = [
+          'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'ADA-USDT', 'SOL-USDT',
+          'DOT-USDT', 'DOGE-USDT', 'AVAX-USDT', 'MATIC-USDT', 'LINK-USDT'
+        ];
+        this.showMessage('获取热门币种失败: ' + (error.response?.data?.detail || error.message), 'error', 'coin');
+      } finally {
+        this.loadingCoins = false;
       }
     },
 
@@ -316,6 +357,33 @@ export default {
   box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
 }
 
+.coin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.refresh-btn {
+  padding: 6px 12px;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background: #40a9ff;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .button-group {
   display: flex;
   gap: 10px;
@@ -374,11 +442,35 @@ export default {
   color: #ff4d4f;
 }
 
+.message.warning {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  color: #faad14;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(24, 144, 255, 0.2);
+  border-radius: 50%;
+  border-top-color: #1890ff;
+  animation: spin 1s ease-in-out infinite;
+  margin: 20px auto;
+  text-align: center;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .coin-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: 10px;
   margin-top: 10px;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .coin-item {

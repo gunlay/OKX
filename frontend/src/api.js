@@ -40,6 +40,9 @@ export const configApi = {
   // 获取币种配置
   getCoinConfig: () => api.get('/config/coins'),
   
+  // 获取热门币种
+  getPopularCoins: (limit = 100) => api.get('/config/popular-coins', { params: { limit } }),
+  
   // 测试 API 连接
   testApiConnection: (config) => api.post('/config/test', config),
 };

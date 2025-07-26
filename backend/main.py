@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # 导入自定义模块
 from models import Base, UserConfig, encrypt_text, decrypt_text
-from okx_api import OKXClient
+from okx_api import OKXClient, get_popular_coins_public
 
 # 配置日志
 logging.basicConfig(
@@ -407,6 +407,17 @@ def get_coin_config():
         return []
     
     return json.loads(config.selected_coins)
+
+@app.get("/api/config/popular-coins", response_model=List[str])
+def get_popular_coins(limit: int = 100):
+    """获取OKX热门币种列表"""
+    try:
+        # 使用公共API获取热门币种（无需API密钥）
+        popular_coins = get_popular_coins_public(limit)
+        return popular_coins
+    except Exception as e:
+        logger.exception(f"获取热门币种异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取热门币种失败: {str(e)}")
 
 @app.post("/api/config/test")
 def test_api_connection(config: ApiConfig = Body(...)):

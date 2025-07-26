@@ -4,7 +4,7 @@ import hashlib
 import base64
 import json
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 
 class OKXClient:
@@ -115,4 +115,72 @@ class OKXClient:
         if symbol:
             params['instId'] = symbol
         
-        return self._request('GET', 'trade/orders-history', params=params) 
+        return self._request('GET', 'trade/orders-history', params=params)
+    
+    def get_popular_coins(self, limit: int = 100) -> List[str]:
+        """获取热门币种列表
+        
+        由于OKX API没有直接提供热门币种接口，我们获取交易量最大的USDT交易对
+        """
+        try:
+            # 获取所有USDT交易对的Ticker
+            params = {'instType': 'SPOT'}
+            result = self._request('GET', 'market/tickers', params=params)
+            
+            if result.get('code') != '0':
+                return []
+            
+            # 筛选USDT交易对
+            usdt_pairs = []
+            for item in result.get('data', []):
+                inst_id = item.get('instId', '')
+                if inst_id.endswith('-USDT'):
+                    # 计算24小时交易量（以USDT计）
+                    vol_24h = float(item.get('vol24h', 0)) * float(item.get('last', 0))
+                    usdt_pairs.append({
+                        'symbol': inst_id,
+                        'volume': vol_24h
+                    })
+            
+            # 按交易量排序
+            usdt_pairs.sort(key=lambda x: x['volume'], reverse=True)
+            
+            # 返回前limit个
+            return [pair['symbol'] for pair in usdt_pairs[:limit]]
+        
+        except Exception as e:
+            print(f"获取热门币种异常: {str(e)}")
+            return []
+
+# 无需API密钥的公共方法
+def get_popular_coins_public(limit: int = 100) -> List[str]:
+    """获取热门币种列表（公共API，无需认证）"""
+    try:
+        url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
+        response = requests.get(url)
+        result = response.json()
+        
+        if result.get('code') != '0':
+            return []
+        
+        # 筛选USDT交易对
+        usdt_pairs = []
+        for item in result.get('data', []):
+            inst_id = item.get('instId', '')
+            if inst_id.endswith('-USDT'):
+                # 计算24小时交易量（以USDT计）
+                vol_24h = float(item.get('vol24h', 0)) * float(item.get('last', 0))
+                usdt_pairs.append({
+                    'symbol': inst_id,
+                    'volume': vol_24h
+                })
+        
+        # 按交易量排序
+        usdt_pairs.sort(key=lambda x: x['volume'], reverse=True)
+        
+        # 返回前limit个
+        return [pair['symbol'] for pair in usdt_pairs[:limit]]
+    
+    except Exception as e:
+        print(f"获取热门币种异常: {str(e)}")
+        return [] 
