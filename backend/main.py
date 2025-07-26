@@ -207,21 +207,6 @@ def schedule_task(plan):
                     )
                     logger.info(f"任务 {plan.id} 调度为每月 {day}日 {plan.time}")
                 
-                # 添加一次性测试任务
-                test_time = datetime.now() + timedelta(seconds=30)
-                test_job_id = f"test_dca_task_{plan.id}"
-                if scheduler.get_job(test_job_id):
-                    scheduler.remove_job(test_job_id)
-                
-                logger.info(f"添加测试任务 {test_job_id}，将在30秒后执行")
-                scheduler.add_job(
-                    execute_dca_task,
-                    'date',
-                    run_date=test_time,
-                    args=[plan.id],
-                    id=test_job_id
-                )
-                
                 # 已经为每个日期创建了单独的任务，不需要再创建主任务
                 return
             except (json.JSONDecodeError, ValueError) as e:
@@ -244,21 +229,6 @@ def schedule_task(plan):
         args=[plan.id],
         id=job_id,
         replace_existing=True
-    )
-    
-    # 添加一次性任务，用于测试
-    test_time = datetime.now() + timedelta(seconds=30)
-    test_job_id = f"test_dca_task_{plan.id}"
-    if scheduler.get_job(test_job_id):
-        scheduler.remove_job(test_job_id)
-    
-    logger.info(f"添加测试任务 {test_job_id}，将在30秒后执行")
-    scheduler.add_job(
-        execute_dca_task,
-        'date',
-        run_date=test_time,
-        args=[plan.id],
-        id=test_job_id
     )
 
 # 初始化所有任务的调度
