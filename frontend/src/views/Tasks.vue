@@ -5,15 +5,13 @@
       <div class="filter-row">
         <select v-model="filters.symbol" class="filter-select">
           <option value="">全部币种</option>
-          <option value="BTC-USDT">BTC-USDT</option>
-          <option value="ETH-USDT">ETH-USDT</option>
-          <option value="BNB-USDT">BNB-USDT</option>
+          <option v-for="coin in availableCoins" :key="coin" :value="coin">{{ coin }}</option>
         </select>
         
         <select v-model="filters.status" class="filter-select">
           <option value="">全部状态</option>
-          <option value="active">有效</option>
-          <option value="inactive">无效</option>
+          <option value="enabled">有效</option>
+          <option value="disabled">无效</option>
         </select>
         
         <select v-model="filters.direction" class="filter-select">
@@ -29,12 +27,12 @@
     </div>
 
     <!-- 任务列表 -->
-    <div class="task-list">
+    <div class="task-list" v-if="!loading && tasks.length > 0">
       <div v-for="task in filteredTasks" :key="task.id" class="task-item">
         <div class="task-header">
           <span class="task-id">#{{ task.id }}</span>
           <span class="task-status" :class="task.status">
-            {{ task.status === 'active' ? '有效' : '无效' }}
+            {{ task.status === 'enabled' ? '有效' : '无效' }}
           </span>
         </div>
         
@@ -50,13 +48,13 @@
             </div>
             <div class="info-row">
               <span class="label">方向:</span>
-              <span class="value" :class="task.direction">
-                {{ task.direction === 'buy' ? '买入' : '卖出' }}
+              <span class="value" :class="task.direction || 'buy'">
+                {{ task.direction === 'sell' ? '卖出' : '买入' }}
               </span>
             </div>
             <div class="info-row">
               <span class="label">周期:</span>
-              <span class="value">{{ task.frequency }}</span>
+              <span class="value">{{ formatFrequency(task) }}</span>
             </div>
           </div>
           
@@ -66,6 +64,19 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 加载状态 -->
+    <div v-if="loading" class="loading-state">
+      <div class="loading-spinner"></div>
+      <p>加载中...</p>
+    </div>
+
+    <!-- 空状态 -->
+    <div v-if="!loading && tasks.length === 0" class="empty-state">
+      <div class="empty-icon">📋</div>
+      <p>暂无定投任务</p>
+      <button class="btn primary" @click="showCreateModal = true">创建第一个任务</button>
     </div>
 
     <!-- 新建/编辑任务弹窗 -->
@@ -81,9 +92,7 @@
             <label>币种</label>
             <select v-model="taskForm.symbol" required>
               <option value="">请选择币种</option>
-              <option value="BTC-USDT">BTC-USDT</option>
-              <option value="ETH-USDT">ETH-USDT</option>
-              <option value="BNB-USDT">BNB-USDT</option>
+              <option v-for="coin in availableCoins" :key="coin" :value="coin">{{ coin }}</option>
             </select>
           </div>
           
@@ -113,7 +122,7 @@
           
           <div v-if="taskForm.frequency === 'weekly'" class="form-group">
             <label>星期几</label>
-            <select v-model="taskForm.dayOfWeek">
+            <select v-model="taskForm.day_of_week">
               <option value="0">周一</option>
               <option value="1">周二</option>
               <option value="2">周三</option>
@@ -128,11 +137,17 @@
             <label>执行时间</label>
             <input type="time" v-model="taskForm.time" required />
           </div>
+
+          <div v-if="formError" class="form-error">
+            {{ formError }}
+          </div>
         </div>
         
         <div class="modal-footer">
           <button class="btn secondary" @click="showCreateModal = false">取消</button>
-          <button class="btn primary" @click="saveTask">保存</button>
+          <button class="btn primary" @click="saveTask" :disabled="saving">
+            {{ saving ? '保存中...' : '保存' }}
+          </button>
         </div>
       </div>
     </div>
@@ -140,6 +155,8 @@
 </template>
 
 <script>
+import { dcaApi, configApi } from '../api.js';
+
 export default {
   name: 'Tasks',
   data() {
@@ -154,32 +171,16 @@ export default {
       taskForm: {
         symbol: '',
         amount: '',
-        direction: '',
+        direction: 'buy',
         frequency: '',
-        dayOfWeek: null,
+        day_of_week: null,
         time: ''
       },
-      tasks: [
-        {
-          id: 1,
-          symbol: 'BTC-USDT',
-          amount: 100,
-          direction: 'buy',
-          status: 'active',
-          frequency: 'weekly',
-          dayOfWeek: 1,
-          time: '10:00'
-        },
-        {
-          id: 2,
-          symbol: 'ETH-USDT',
-          amount: 50,
-          direction: 'buy',
-          status: 'active',
-          frequency: 'daily',
-          time: '14:00'
-        }
-      ]
+      tasks: [],
+      availableCoins: [],
+      loading: false,
+      saving: false,
+      formError: ''
     }
   },
   computed: {
@@ -187,59 +188,144 @@ export default {
       return this.tasks.filter(task => {
         if (this.filters.symbol && task.symbol !== this.filters.symbol) return false
         if (this.filters.status && task.status !== this.filters.status) return false
-        if (this.filters.direction && task.direction !== this.filters.direction) return false
+        if (this.filters.direction && (task.direction || 'buy') !== this.filters.direction) return false
         return true
       })
     }
   },
+  async mounted() {
+    this.loadTasks();
+    this.loadCoins();
+  },
   methods: {
-    editTask(task) {
-      this.editingTask = task
-      this.taskForm = { ...task }
-      this.showCreateModal = true
-    },
-    
-    deleteTask(id) {
-      if (confirm('确定要删除这个任务吗？')) {
-        this.tasks = this.tasks.filter(task => task.id !== id)
+    async loadTasks() {
+      try {
+        this.loading = true;
+        const response = await dcaApi.getPlans();
+        this.tasks = response.data;
+      } catch (error) {
+        console.error('加载任务失败:', error);
+        alert('加载任务失败: ' + (error.response?.data?.detail || error.message));
+      } finally {
+        this.loading = false;
       }
     },
     
-    saveTask() {
+    async loadCoins() {
+      try {
+        const response = await configApi.getCoinConfig();
+        this.availableCoins = response.data;
+        
+        // 如果没有配置币种，添加默认币种
+        if (!this.availableCoins || this.availableCoins.length === 0) {
+          this.availableCoins = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT'];
+        }
+      } catch (error) {
+        console.error('加载币种配置失败:', error);
+        this.availableCoins = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT'];
+      }
+    },
+    
+    formatFrequency(task) {
+      if (task.frequency === 'daily') {
+        return `每日 ${task.time}`;
+      } else if (task.frequency === 'weekly') {
+        const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+        const day = weekdays[task.day_of_week] || '未知';
+        return `每周${day} ${task.time}`;
+      } else if (task.frequency === 'monthly') {
+        return `每月 ${task.time}`;
+      }
+      return task.frequency;
+    },
+    
+    editTask(task) {
+      this.editingTask = task;
+      this.taskForm = { 
+        symbol: task.symbol,
+        amount: task.amount,
+        direction: task.direction || 'buy',
+        frequency: task.frequency,
+        day_of_week: task.day_of_week !== undefined ? String(task.day_of_week) : null,
+        time: task.time
+      };
+      this.showCreateModal = true;
+    },
+    
+    async deleteTask(id) {
+      if (confirm('确定要删除这个任务吗？')) {
+        try {
+          await dcaApi.deletePlan(id);
+          this.tasks = this.tasks.filter(task => task.id !== id);
+        } catch (error) {
+          console.error('删除任务失败:', error);
+          alert('删除任务失败: ' + (error.response?.data?.detail || error.message));
+        }
+      }
+    },
+    
+    async saveTask() {
+      // 表单验证
       if (!this.taskForm.symbol || !this.taskForm.amount || !this.taskForm.direction || 
           !this.taskForm.frequency || !this.taskForm.time) {
-        alert('请填写完整信息')
-        return
+        this.formError = '请填写完整信息';
+        return;
       }
       
-      if (this.editingTask) {
-        // 编辑任务
-        const index = this.tasks.findIndex(task => task.id === this.editingTask.id)
-        this.tasks[index] = { ...this.editingTask, ...this.taskForm }
-      } else {
-        // 新建任务
-        const newTask = {
-          id: Date.now(),
-          ...this.taskForm,
-          status: 'active'
+      if (this.taskForm.frequency === 'weekly' && this.taskForm.day_of_week === null) {
+        this.formError = '请选择星期几';
+        return;
+      }
+      
+      this.formError = '';
+      this.saving = true;
+      
+      try {
+        // 准备提交数据
+        const planData = {
+          symbol: this.taskForm.symbol,
+          amount: parseFloat(this.taskForm.amount),
+          frequency: this.taskForm.frequency,
+          day_of_week: this.taskForm.frequency === 'weekly' ? parseInt(this.taskForm.day_of_week) : null,
+          time: this.taskForm.time,
+          direction: this.taskForm.direction
+        };
+        
+        let response;
+        if (this.editingTask) {
+          // 编辑任务
+          response = await dcaApi.updatePlan(this.editingTask.id, planData);
+          const index = this.tasks.findIndex(task => task.id === this.editingTask.id);
+          if (index !== -1) {
+            this.tasks[index] = response.data;
+          }
+        } else {
+          // 新建任务
+          response = await dcaApi.createPlan(planData);
+          this.tasks.push(response.data);
         }
-        this.tasks.push(newTask)
+        
+        this.showCreateModal = false;
+        this.editingTask = null;
+        this.resetForm();
+      } catch (error) {
+        console.error('保存任务失败:', error);
+        this.formError = '保存失败: ' + (error.response?.data?.detail || error.message);
+      } finally {
+        this.saving = false;
       }
-      
-      this.showCreateModal = false
-      this.editingTask = null
-      this.resetForm()
     },
     
     resetForm() {
       this.taskForm = {
         symbol: '',
         amount: '',
-        direction: '',
+        direction: 'buy',
         frequency: '',
-        dayOfWeek: null,
+        day_of_week: null,
         time: ''
-      }
+      };
+      this.formError = '';
     }
   }
 }
@@ -317,12 +403,12 @@ export default {
   font-weight: 500;
 }
 
-.task-status.active {
+.task-status.enabled {
   background: #f6ffed;
   color: #52c41a;
 }
 
-.task-status.inactive {
+.task-status.disabled {
   background: #fff2f0;
   color: #ff4d4f;
 }
@@ -456,6 +542,15 @@ export default {
   font-size: 14px;
 }
 
+.form-error {
+  color: #ff4d4f;
+  margin-top: 10px;
+  font-size: 14px;
+  padding: 8px;
+  background: #fff1f0;
+  border-radius: 4px;
+}
+
 .modal-footer {
   display: flex;
   gap: 10px;
@@ -480,6 +575,48 @@ export default {
 .btn.secondary {
   background: #f0f0f0;
   color: #333;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 加载状态 */
+.loading-state {
+  text-align: center;
+  padding: 40px 0;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(24, 144, 255, 0.2);
+  border-radius: 50%;
+  border-top-color: #1890ff;
+  animation: spin 1s ease-in-out infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 空状态 */
+.empty-state {
+  text-align: center;
+  padding: 40px 0;
+  color: #999;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.empty-state p {
+  margin-bottom: 20px;
 }
 
 /* 移动端适配 */

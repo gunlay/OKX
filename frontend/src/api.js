@@ -21,6 +21,9 @@ export const dcaApi = {
   
   // 删除 DCA 计划
   deletePlan: (id) => api.delete(`/dca-plan/${id}`),
+
+  // 更新计划状态
+  updatePlanStatus: (id, status) => api.put(`/dca-plan/${id}/status`, { status }),
 };
 
 // 配置中心相关 API
@@ -39,6 +42,18 @@ export const configApi = {
   
   // 测试 API 连接
   testApiConnection: (config) => api.post('/config/test', config),
+};
+
+// 资产相关 API
+export const assetApi = {
+  // 获取资产概览
+  getOverview: () => api.get('/assets/overview'),
+};
+
+// 交易记录相关 API
+export const transactionApi = {
+  // 获取交易记录列表
+  getTransactions: (params) => api.get('/transactions', { params }),
 };
 
 export default api; 

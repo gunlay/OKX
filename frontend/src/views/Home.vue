@@ -32,23 +32,40 @@
     <div class="chart-section">
       <h3>资产分布</h3>
       <div class="pie-chart">
-        <div class="chart-placeholder">
+        <div v-if="loading" class="loading-spinner"></div>
+        <div v-else-if="assetDistribution.length === 0" class="no-data">
+          暂无资产数据
+        </div>
+        <div v-else class="chart-container">
           <div class="pie-circle">
-            <div class="pie-segment" style="--percentage: 60%; --color: #1890ff;"></div>
-            <div class="pie-segment" style="--percentage: 40%; --color: #52c41a; --start: 60%;"></div>
+            <div 
+              v-for="(asset, index) in assetDistribution" 
+              :key="asset.currency"
+              class="pie-segment" 
+              :style="{
+                '--percentage': `${asset.percentage}%`, 
+                '--color': getAssetColor(index),
+                '--start': `${getStartPercentage(index)}%`
+              }"
+            ></div>
           </div>
           <div class="legend">
-            <div class="legend-item">
-              <span class="color-dot" style="background: #1890ff;"></span>
-              <span>投资资产 (60%)</span>
-            </div>
-            <div class="legend-item">
-              <span class="color-dot" style="background: #52c41a;"></span>
-              <span>未投资 USDT (40%)</span>
+            <div 
+              v-for="(asset, index) in assetDistribution" 
+              :key="asset.currency"
+              class="legend-item"
+            >
+              <span class="color-dot" :style="{ background: getAssetColor(index) }"></span>
+              <span>{{ asset.currency }} ({{ asset.percentage.toFixed(2) }}%)</span>
             </div>
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 错误提示 -->
+    <div v-if="error" class="error-message">
+      {{ error }}
     </div>
 
     <!-- 快速操作 -->
@@ -64,29 +81,76 @@
 </template>
 
 <script>
+import { assetApi } from '../api.js';
+
 export default {
   name: 'Home',
   data() {
     return {
-      totalAssets: 12500.50,
-      totalInvestment: 10000.00,
-      totalProfit: 2500.50
+      totalAssets: 0,
+      totalInvestment: 0,
+      totalProfit: 0,
+      assetDistribution: [],
+      loading: true,
+      error: '',
+      colors: ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#faad14', '#13c2c2', '#f5222d']
     }
   },
+  mounted() {
+    this.fetchAssetData();
+  },
   methods: {
+    async fetchAssetData() {
+      try {
+        this.loading = true;
+        this.error = '';
+        
+        const response = await assetApi.getOverview();
+        const data = response.data;
+        
+        if (data.error) {
+          this.error = data.error;
+          return;
+        }
+        
+        this.totalAssets = data.totalAssets;
+        this.totalInvestment = data.totalInvestment;
+        this.totalProfit = data.totalProfit;
+        this.assetDistribution = data.assetDistribution;
+      } catch (error) {
+        console.error('获取资产数据失败:', error);
+        this.error = '获取资产数据失败: ' + (error.response?.data?.detail || error.message);
+      } finally {
+        this.loading = false;
+      }
+    },
+    
     formatNumber(num) {
       return num.toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
-      })
+      });
     },
+    
+    getAssetColor(index) {
+      return this.colors[index % this.colors.length];
+    },
+    
+    getStartPercentage(index) {
+      let start = 0;
+      for (let i = 0; i < index; i++) {
+        start += this.assetDistribution[i].percentage;
+      }
+      return start;
+    },
+    
     logout() {
       // 退出登录逻辑
       if (confirm('确定要退出登录吗？')) {
         // 清除用户信息
-        localStorage.removeItem('user')
+        localStorage.removeItem('user');
         // 跳转到登录页或刷新页面
-        window.location.reload()
+        window.location.reload();
       }
     }
   }
@@ -185,10 +249,12 @@ export default {
 .pie-chart {
   display: flex;
   justify-content: center;
+  min-height: 200px;
 }
 
-.chart-placeholder {
+.chart-container {
   text-align: center;
+  width: 100%;
 }
 
 .pie-circle {
@@ -197,9 +263,19 @@ export default {
   border-radius: 50%;
   position: relative;
   margin: 0 auto 20px;
+  background: #f5f5f5;
+  overflow: hidden;
+}
+
+.pie-segment {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   background: conic-gradient(
-    var(--color) 0deg var(--percentage),
-    transparent var(--percentage) 360deg
+    var(--color) var(--start) calc(var(--start) + var(--percentage)),
+    transparent calc(var(--start) + var(--percentage)) 100%
   );
 }
 
@@ -207,6 +283,8 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-width: 300px;
+  margin: 0 auto;
 }
 
 .legend-item {
@@ -221,6 +299,38 @@ export default {
   width: 12px;
   height: 12px;
   border-radius: 50%;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(24, 144, 255, 0.2);
+  border-radius: 50%;
+  border-top-color: #1890ff;
+  animation: spin 1s ease-in-out infinite;
+  margin: 50px 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.no-data {
+  text-align: center;
+  padding: 50px 0;
+  color: #999;
+  font-size: 16px;
+}
+
+.error-message {
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+  color: #ff4d4f;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
 }
 
 .quick-actions {

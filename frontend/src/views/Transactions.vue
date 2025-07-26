@@ -5,9 +5,7 @@
       <div class="filter-row">
         <select v-model="filters.symbol" class="filter-select">
           <option value="">全部币种</option>
-          <option value="BTC-USDT">BTC-USDT</option>
-          <option value="ETH-USDT">ETH-USDT</option>
-          <option value="BNB-USDT">BNB-USDT</option>
+          <option v-for="coin in availableCoins" :key="coin" :value="coin">{{ coin }}</option>
         </select>
         
         <select v-model="filters.direction" class="filter-select">
@@ -27,11 +25,21 @@
           <input type="date" v-model="filters.endDate" />
         </div>
       </div>
+      
+      <button class="search-btn" @click="fetchTransactions">
+        <span>查询</span>
+      </button>
+    </div>
+
+    <!-- 加载状态 -->
+    <div v-if="loading" class="loading-state">
+      <div class="loading-spinner"></div>
+      <p>加载中...</p>
     </div>
 
     <!-- 交易列表 -->
-    <div class="transaction-list">
-      <div v-for="transaction in filteredTransactions" :key="transaction.id" class="transaction-item">
+    <div v-else-if="transactions.length > 0" class="transaction-list">
+      <div v-for="transaction in transactions" :key="transaction.id" class="transaction-item">
         <div class="transaction-header">
           <span class="transaction-id">#{{ transaction.id }}</span>
           <span class="transaction-direction" :class="transaction.direction">
@@ -47,19 +55,17 @@
             </div>
             <div class="info-row">
               <span class="label">成交金额:</span>
-              <span class="value">${{ transaction.amount }}</span>
+              <span class="value">${{ formatNumber(transaction.amount) }}</span>
             </div>
             <div class="info-row">
-              <span class="label">成交数量:</span>
-              <span class="value">{{ transaction.quantity }}</span>
-            </div>
-            <div class="info-row">
-              <span class="label">成交价格:</span>
-              <span class="value">${{ transaction.price }}</span>
+              <span class="label">状态:</span>
+              <span class="value" :class="transaction.status">
+                {{ transaction.status === 'success' ? '成功' : '失败' }}
+              </span>
             </div>
             <div class="info-row">
               <span class="label">成交时间:</span>
-              <span class="value">{{ formatDate(transaction.timestamp) }}</span>
+              <span class="value">{{ formatDate(transaction.executed_at) }}</span>
             </div>
           </div>
         </div>
@@ -67,14 +73,21 @@
     </div>
 
     <!-- 空状态 -->
-    <div v-if="filteredTransactions.length === 0" class="empty-state">
+    <div v-else class="empty-state">
       <div class="empty-icon">📊</div>
       <p>暂无交易记录</p>
+    </div>
+
+    <!-- 错误提示 -->
+    <div v-if="error" class="error-message">
+      {{ error }}
     </div>
   </div>
 </template>
 
 <script>
+import { transactionApi, configApi } from '../api.js';
+
 export default {
   name: 'Transactions',
   data() {
@@ -85,77 +98,83 @@ export default {
         startDate: '',
         endDate: ''
       },
-      transactions: [
-        {
-          id: 1,
-          symbol: 'BTC-USDT',
-          direction: 'buy',
-          amount: 100.00,
-          quantity: 0.0032,
-          price: 31250.00,
-          timestamp: '2024-01-15T10:30:00Z'
-        },
-        {
-          id: 2,
-          symbol: 'ETH-USDT',
-          direction: 'buy',
-          amount: 50.00,
-          quantity: 0.025,
-          price: 2000.00,
-          timestamp: '2024-01-14T14:20:00Z'
-        },
-        {
-          id: 3,
-          symbol: 'BTC-USDT',
-          direction: 'sell',
-          amount: 80.00,
-          quantity: 0.0025,
-          price: 32000.00,
-          timestamp: '2024-01-13T09:15:00Z'
-        }
-      ]
+      transactions: [],
+      availableCoins: [],
+      loading: false,
+      error: ''
     }
   },
-  computed: {
-    filteredTransactions() {
-      return this.transactions.filter(transaction => {
-        // 币种筛选
-        if (this.filters.symbol && transaction.symbol !== this.filters.symbol) {
-          return false
-        }
-        
-        // 方向筛选
-        if (this.filters.direction && transaction.direction !== this.filters.direction) {
-          return false
-        }
-        
-        // 日期筛选
-        if (this.filters.startDate || this.filters.endDate) {
-          const transactionDate = new Date(transaction.timestamp).toISOString().split('T')[0]
-          
-          if (this.filters.startDate && transactionDate < this.filters.startDate) {
-            return false
-          }
-          
-          if (this.filters.endDate && transactionDate > this.filters.endDate) {
-            return false
-          }
-        }
-        
-        return true
-      }).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    }
+  mounted() {
+    this.loadCoins();
+    this.fetchTransactions();
   },
   methods: {
+    async loadCoins() {
+      try {
+        const response = await configApi.getCoinConfig();
+        this.availableCoins = response.data;
+        
+        // 如果没有配置币种，添加默认币种
+        if (!this.availableCoins || this.availableCoins.length === 0) {
+          this.availableCoins = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT'];
+        }
+      } catch (error) {
+        console.error('加载币种配置失败:', error);
+        this.availableCoins = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT'];
+      }
+    },
+    
+    async fetchTransactions() {
+      try {
+        this.loading = true;
+        this.error = '';
+        
+        const params = {
+          limit: 100
+        };
+        
+        if (this.filters.symbol) {
+          params.symbol = this.filters.symbol;
+        }
+        
+        if (this.filters.direction) {
+          params.direction = this.filters.direction;
+        }
+        
+        if (this.filters.startDate) {
+          params.start_date = this.filters.startDate;
+        }
+        
+        if (this.filters.endDate) {
+          params.end_date = this.filters.endDate;
+        }
+        
+        const response = await transactionApi.getTransactions(params);
+        this.transactions = response.data;
+      } catch (error) {
+        console.error('获取交易记录失败:', error);
+        this.error = '获取交易记录失败: ' + (error.response?.data?.detail || error.message);
+      } finally {
+        this.loading = false;
+      }
+    },
+    
+    formatNumber(num) {
+      return parseFloat(num).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    },
+    
     formatDate(timestamp) {
-      const date = new Date(timestamp)
+      const date = new Date(timestamp);
       return date.toLocaleString('zh-CN', {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
         hour: '2-digit',
         minute: '2-digit'
-      })
+      });
     }
   }
 }
@@ -193,6 +212,7 @@ export default {
 .date-filter {
   display: flex;
   gap: 10px;
+  margin-bottom: 15px;
 }
 
 .date-input {
@@ -212,6 +232,22 @@ export default {
   border: 1px solid #d9d9d9;
   border-radius: 6px;
   font-size: 14px;
+}
+
+.search-btn {
+  width: 100%;
+  padding: 10px;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.search-btn:hover {
+  background: #40a9ff;
 }
 
 .transaction-list {
@@ -286,6 +322,35 @@ export default {
   font-size: 14px;
 }
 
+.value.success {
+  color: #52c41a;
+}
+
+.value.failed {
+  color: #ff4d4f;
+}
+
+/* 加载状态 */
+.loading-state {
+  text-align: center;
+  padding: 40px 0;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(24, 144, 255, 0.2);
+  border-radius: 50%;
+  border-top-color: #1890ff;
+  animation: spin 1s ease-in-out infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .empty-state {
   text-align: center;
   padding: 60px 20px;
@@ -298,8 +363,17 @@ export default {
 }
 
 .empty-state p {
-  font-size: 16px;
   margin: 0;
+}
+
+.error-message {
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+  color: #ff4d4f;
+  padding: 12px;
+  border-radius: 8px;
+  margin-top: 20px;
+  font-size: 14px;
 }
 
 /* 移动端适配 */
