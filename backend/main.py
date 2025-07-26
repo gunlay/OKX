@@ -13,7 +13,7 @@ import logging
 from fastapi.middleware.cors import CORSMiddleware
 
 # 导入自定义模块
-from models import Base, UserConfig, encrypt_text, decrypt_text
+from models import Base, UserConfig, DCAPlan, Transaction, encrypt_text, decrypt_text
 from okx_api import OKXClient, get_popular_coins_public
 
 # 配置日志
@@ -594,31 +594,4 @@ def get_assets_overview():
             "totalProfit": 0,
             "assetDistribution": [],
             "error": f"服务器异常: {str(e)}"
-        }
-
-# 定投计划模型
-class DCAPlan(Base):
-    __tablename__ = "dca_plans"
-    id = Column(Integer, primary_key=True, index=True)
-    symbol = Column(String, index=True)
-    amount = Column(Float)
-    frequency = Column(String)  # daily, weekly, monthly
-    day_of_week = Column(Integer, nullable=True)  # 0=Monday
-    month_days = Column(Text, nullable=True)  # 存储每月的多个日期，JSON字符串
-    time = Column(String)  # "10:00"
-    direction = Column(String, default="buy")  # buy, sell
-    status = Column(String, default="enabled")  # enabled, disabled
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-# 交易记录模型
-class Transaction(Base):
-    __tablename__ = "transactions"
-    id = Column(Integer, primary_key=True, index=True)
-    plan_id = Column(Integer, index=True)
-    symbol = Column(String, index=True)
-    amount = Column(Float)
-    direction = Column(String)  # buy, sell
-    status = Column(String)  # success, failed
-    response = Column(Text)  # 存储API响应
-    executed_at = Column(DateTime, default=datetime.utcnow) 
+        } 
