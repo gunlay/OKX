@@ -55,6 +55,7 @@ class DCAPlanCreate(BaseModel):
     amount: float
     frequency: str
     day_of_week: Optional[int] = None
+    month_days: Optional[str] = None  # 存储每月的多个日期，JSON字符串
     time: str
     direction: Optional[str] = "buy"  # 默认为买入
 
@@ -187,13 +188,56 @@ def schedule_task(plan):
         trigger = CronTrigger(day_of_week=plan.day_of_week, hour=hour, minute=minute)
         logger.info(f"任务 {plan.id} 调度为每周 {plan.day_of_week} {plan.time}")
     elif plan.frequency == "monthly":
-        trigger = CronTrigger(day=1, hour=hour, minute=minute)
-        logger.info(f"任务 {plan.id} 调度为每月 {plan.time}")
+        if plan.month_days and len(plan.month_days) > 0:
+            try:
+                month_days = json.loads(plan.month_days)
+                # 为每个日期创建单独的任务
+                for day in month_days:
+                    day_job_id = f"dca_task_{plan.id}_day_{day}"
+                    if scheduler.get_job(day_job_id):
+                        scheduler.remove_job(day_job_id)
+                    
+                    day_trigger = CronTrigger(day=day, hour=hour, minute=minute)
+                    scheduler.add_job(
+                        execute_dca_task,
+                        trigger=day_trigger,
+                        args=[plan.id],
+                        id=day_job_id,
+                        replace_existing=True
+                    )
+                    logger.info(f"任务 {plan.id} 调度为每月 {day}日 {plan.time}")
+                
+                # 添加一次性测试任务
+                test_time = datetime.now() + timedelta(seconds=30)
+                test_job_id = f"test_dca_task_{plan.id}"
+                if scheduler.get_job(test_job_id):
+                    scheduler.remove_job(test_job_id)
+                
+                logger.info(f"添加测试任务 {test_job_id}，将在30秒后执行")
+                scheduler.add_job(
+                    execute_dca_task,
+                    'date',
+                    run_date=test_time,
+                    args=[plan.id],
+                    id=test_job_id
+                )
+                
+                # 已经为每个日期创建了单独的任务，不需要再创建主任务
+                return
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"解析月份日期失败: {e}")
+                # 如果解析失败，回退到默认行为：每月1日执行
+                trigger = CronTrigger(day=1, hour=hour, minute=minute)
+                logger.info(f"任务 {plan.id} 调度为每月1日 {plan.time}")
+        else:
+            # 如果没有指定日期，默认每月1日执行
+            trigger = CronTrigger(day=1, hour=hour, minute=minute)
+            logger.info(f"任务 {plan.id} 调度为每月1日 {plan.time}")
     else:
         logger.error(f"任务 {plan.id} 频率配置错误: {plan.frequency}")
         return
     
-    # 添加任务
+    # 添加任务（针对每日和每周的情况，或者月份解析失败的情况）
     scheduler.add_job(
         execute_dca_task,
         trigger=trigger,
@@ -560,6 +604,7 @@ class DCAPlan(Base):
     amount = Column(Float)
     frequency = Column(String)  # daily, weekly, monthly
     day_of_week = Column(Integer, nullable=True)  # 0=Monday
+    month_days = Column(Text, nullable=True)  # 存储每月的多个日期，JSON字符串
     time = Column(String)  # "10:00"
     direction = Column(String, default="buy")  # buy, sell
     status = Column(String, default="enabled")  # enabled, disabled

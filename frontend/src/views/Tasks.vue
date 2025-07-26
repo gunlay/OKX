@@ -133,6 +133,20 @@
             </select>
           </div>
           
+          <div v-if="taskForm.frequency === 'monthly'" class="form-group">
+            <label>每月日期（可多选）</label>
+            <div class="date-grid">
+              <div 
+                v-for="day in 31" 
+                :key="day"
+                :class="['date-item', { selected: isMonthDaySelected(day) }]"
+                @click="toggleMonthDay(day)"
+              >
+                {{ day }}
+              </div>
+            </div>
+          </div>
+          
           <div class="form-group">
             <label>执行时间</label>
             <input type="time" v-model="taskForm.time" required />
@@ -174,6 +188,7 @@ export default {
         direction: 'buy',
         frequency: '',
         day_of_week: null,
+        month_days: [],  // 存储每月选中的日期
         time: ''
       },
       tasks: [],
@@ -234,9 +249,28 @@ export default {
         const day = weekdays[task.day_of_week] || '未知';
         return `每周${day} ${task.time}`;
       } else if (task.frequency === 'monthly') {
+        if (task.month_days && task.month_days.length > 0) {
+          const days = JSON.parse(task.month_days).sort((a, b) => a - b).join('号,');
+          return `每月${days}号 ${task.time}`;
+        }
         return `每月 ${task.time}`;
       }
       return task.frequency;
+    },
+    
+    isMonthDaySelected(day) {
+      return this.taskForm.month_days.includes(day);
+    },
+    
+    toggleMonthDay(day) {
+      const index = this.taskForm.month_days.indexOf(day);
+      if (index > -1) {
+        this.taskForm.month_days.splice(index, 1);
+      } else {
+        this.taskForm.month_days.push(day);
+      }
+      // 排序
+      this.taskForm.month_days.sort((a, b) => a - b);
     },
     
     editTask(task) {
@@ -247,6 +281,7 @@ export default {
         direction: task.direction || 'buy',
         frequency: task.frequency,
         day_of_week: task.day_of_week !== undefined ? String(task.day_of_week) : null,
+        month_days: task.month_days ? JSON.parse(task.month_days) : [],
         time: task.time
       };
       this.showCreateModal = true;
@@ -277,6 +312,11 @@ export default {
         return;
       }
       
+      if (this.taskForm.frequency === 'monthly' && this.taskForm.month_days.length === 0) {
+        this.formError = '请选择每月执行日期';
+        return;
+      }
+      
       this.formError = '';
       this.saving = true;
       
@@ -287,6 +327,7 @@ export default {
           amount: parseFloat(this.taskForm.amount),
           frequency: this.taskForm.frequency,
           day_of_week: this.taskForm.frequency === 'weekly' ? parseInt(this.taskForm.day_of_week) : null,
+          month_days: this.taskForm.frequency === 'monthly' ? JSON.stringify(this.taskForm.month_days) : null,
           time: this.taskForm.time,
           direction: this.taskForm.direction
         };
@@ -323,6 +364,7 @@ export default {
         direction: 'buy',
         frequency: '',
         day_of_week: null,
+        month_days: [],
         time: ''
       };
       this.formError = '';
@@ -472,6 +514,34 @@ export default {
 .action-btn.delete {
   background: #ff4d4f;
   color: white;
+}
+
+.date-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.date-item {
+  padding: 8px 0;
+  text-align: center;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 14px;
+}
+
+.date-item:hover {
+  border-color: #1890ff;
+  background: #f0f8ff;
+}
+
+.date-item.selected {
+  background: #1890ff;
+  color: white;
+  border-color: #1890ff;
 }
 
 /* 弹窗样式 */
@@ -637,6 +707,10 @@ export default {
   .task-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+  
+  .date-grid {
+    grid-template-columns: repeat(5, 1fr);
   }
 }
 </style> 
