@@ -2,4 +2,6 @@ fastapi
 uvicorn
 sqlalchemy
 apscheduler
-pydantic 
+pydantic
+cryptography
+requests 
