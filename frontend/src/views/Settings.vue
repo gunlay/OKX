@@ -206,14 +206,13 @@ export default {
       } catch (error) {
         this.apiStatus = 'error';
         this.apiStatusText = '连接失败';
+        console.error('API 连接测试失败:', error, error.response && error.response.data);
         let msg = '连接测试失败: ';
         if (error.response && error.response.data) {
-          if (typeof error.response.data === 'string') {
-            msg += error.response.data;
-          } else if (error.response.data.message) {
-            msg += error.response.data.message;
-          } else {
+          try {
             msg += JSON.stringify(error.response.data);
+          } catch (e) {
+            msg += error.response.data.toString();
           }
         } else {
           msg += error.message;
