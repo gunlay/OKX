@@ -180,45 +180,18 @@ def get_coin_config():
     return json.loads(config.selected_coins)
 
 @app.post("/api/config/test")
-def test_api_connection():
-    """测试 OKX API 连接"""
-    db = next(get_db())
-    config = db.query(UserConfig).first()
-    
-    if not config:
-        raise HTTPException(status_code=400, detail="请先配置 API Key")
-    
-    try:
-        # 解密 API 配置
-        api_key = decrypt_text(config.api_key)
-        secret_key = decrypt_text(config.secret_key)
-        passphrase = decrypt_text(config.passphrase)
-        
-        # 创建 OKX 客户端
-        client = OKXClient(api_key, secret_key, passphrase)
-        
-        # 测试连接
-        result = client.test_connection()
-        
-        if result.get('code') == '0':
-            return {
-                "success": True,
-                "message": "API 连接成功",
-                "data": result.get('data', [])
-            }
-        else:
-            return {
-                "success": False,
-                "message": f"API 连接失败: {result.get('msg', '未知错误')}",
-                "data": result
-            }
-            
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接测试失败: {str(e)}",
-            "data": None
-        }
+def test_api_connection(config: ApiConfig):
+    """测试 OKX API 连接，前端传递 ApiConfig 参数"""
+    client = OKXClient(
+        api_key=config.api_key,
+        secret_key=config.secret_key,
+        passphrase=config.passphrase
+    )
+    result = client.test_connection()
+    if result.get('code') == '0':
+        return {"success": True, "message": "API 连接成功"}
+    else:
+        return {"success": False, "message": f"API 连接失败: {result.get('msg', '未知错误')}"}
 
 # 保留原有的 DCAPlan 模型（向后兼容）
 class DCAPlan(Base):
