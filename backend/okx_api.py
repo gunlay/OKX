@@ -89,7 +89,8 @@ class OKXClient:
     
     def get_trading_balance(self) -> Dict[str, Any]:
         """获取交易账户余额"""
-        return self._request('GET', 'account/balance', params={'instType': 'SPOT'})
+        # 不传递instType参数，获取所有余额
+        return self._request('GET', 'account/balance')
     
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         """获取币种价格"""
