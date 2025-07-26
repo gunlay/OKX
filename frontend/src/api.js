@@ -38,7 +38,7 @@ export const configApi = {
   getCoinConfig: () => api.get('/config/coins'),
   
   // 测试 API 连接
-  testApiConnection: () => api.post('/config/test'),
+  testApiConnection: (config) => api.post('/config/test', config),
 };
 
 export default api; 
