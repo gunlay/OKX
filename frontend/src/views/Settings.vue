@@ -190,9 +190,10 @@ export default {
       try {
         this.testing = true;
         this.apiMessage = '';
-        
+        console.log('测试连接传参:', this.apiConfig);
+
         const response = await configApi.testApiConnection(this.apiConfig);
-        
+
         if (response.data && response.data.success) {
           this.apiStatus = 'success';
           this.apiStatusText = '连接正常';
@@ -200,9 +201,14 @@ export default {
         } else {
           this.apiStatus = 'error';
           this.apiStatusText = '连接失败';
-          this.showMessage('API 连接测试失败: ' + (response.data?.message || '未知错误'), 'error', 'api');
+          let msg = 'API 连接测试失败: ';
+          if (response.data && response.data.message) {
+            msg += response.data.message;
+          } else {
+            msg += JSON.stringify(response.data);
+          }
+          this.showMessage(msg, 'error', 'api');
         }
-        
       } catch (error) {
         this.apiStatus = 'error';
         this.apiStatusText = '连接失败';

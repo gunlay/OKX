@@ -182,16 +182,26 @@ def get_coin_config():
 @app.post("/api/config/test")
 def test_api_connection(config: ApiConfig = Body(...)):
     """测试 OKX API 连接，前端传递 ApiConfig 参数"""
-    client = OKXClient(
-        api_key=config.api_key,
-        secret_key=config.secret_key,
-        passphrase=config.passphrase
-    )
-    result = client.test_connection()
-    if result.get('code') == '0':
-        return {"success": True, "message": "API 连接成功"}
-    else:
-        return {"success": False, "message": f"API 连接失败: {result.get('msg', '未知错误')}", "raw": result}
+    try:
+        client = OKXClient(
+            api_key=config.api_key,
+            secret_key=config.secret_key,
+            passphrase=config.passphrase
+        )
+        result = client.test_connection()
+        if result.get('code') == '0':
+            return {"success": True, "message": "API 连接成功"}
+        else:
+            return {
+                "success": False,
+                "message": f"API 连接失败: {result.get('msg', '未知错误')}",
+                "raw": result
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"后端异常: {str(e)}"
+        }
 
 # 保留原有的 DCAPlan 模型（向后兼容）
 class DCAPlan(Base):
