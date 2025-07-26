@@ -5,6 +5,7 @@ import base64
 import json
 import time
 from typing import Dict, Any, Optional
+from datetime import datetime, timezone
 
 class OKXClient:
     def __init__(self, api_key: str, secret_key: str, passphrase: str, sandbox: bool = False):
@@ -19,8 +20,8 @@ class OKXClient:
             self.base_url = "https://www.okx.com/api/v5"
     
     def _get_timestamp(self):
-        """获取 ISO 格式的时间戳"""
-        return str(int(time.time()))
+        """获取 ISO8601 毫秒格式的时间戳，符合OKX要求"""
+        return datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
     
     def _sign(self, timestamp: str, method: str, request_path: str, body: str = ''):
         """生成签名"""
