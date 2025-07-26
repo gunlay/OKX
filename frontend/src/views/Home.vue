@@ -33,13 +33,13 @@
       <h3>资产分布</h3>
       <div class="pie-chart">
         <div v-if="loading" class="loading-spinner"></div>
-        <div v-else-if="assetDistribution.length === 0" class="no-data">
+        <div v-else-if="filteredAssetDistribution.length === 0" class="no-data">
           暂无资产数据
         </div>
         <div v-else class="chart-container">
           <div class="pie-circle">
             <div 
-              v-for="(asset, index) in assetDistribution" 
+              v-for="(asset, index) in filteredAssetDistribution" 
               :key="asset.currency"
               class="pie-segment" 
               :style="{
@@ -51,7 +51,7 @@
           </div>
           <div class="legend">
             <div 
-              v-for="(asset, index) in assetDistribution" 
+              v-for="(asset, index) in filteredAssetDistribution" 
               :key="asset.currency"
               class="legend-item"
             >
@@ -99,6 +99,12 @@ export default {
   mounted() {
     this.fetchAssetData();
   },
+  computed: {
+    filteredAssetDistribution() {
+      // 过滤掉占比小于0.01%的资产
+      return this.assetDistribution.filter(asset => asset.percentage >= 0.01);
+    }
+  },
   methods: {
     async fetchAssetData() {
       try {
@@ -139,7 +145,7 @@ export default {
     getStartPercentage(index) {
       let start = 0;
       for (let i = 0; i < index; i++) {
-        start += this.assetDistribution[i].percentage;
+        start += this.filteredAssetDistribution[i].percentage;
       }
       return start;
     },
