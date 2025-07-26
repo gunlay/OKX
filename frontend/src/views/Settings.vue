@@ -191,7 +191,7 @@ export default {
         this.testing = true;
         this.apiMessage = '';
         
-        const response = await configApi.testApiConnection();
+        const response = await configApi.testApiConnection(this.apiConfig);
         
         if (response.data && response.data.success) {
           this.apiStatus = 'success';
@@ -204,10 +204,21 @@ export default {
         }
         
       } catch (error) {
-        console.error('API 连接测试失败:', error);
         this.apiStatus = 'error';
         this.apiStatusText = '连接失败';
-        this.showMessage('连接测试失败: ' + (error.response?.data?.detail || error.message), 'error', 'api');
+        let msg = '连接测试失败: ';
+        if (error.response && error.response.data) {
+          if (typeof error.response.data === 'string') {
+            msg += error.response.data;
+          } else if (error.response.data.message) {
+            msg += error.response.data.message;
+          } else {
+            msg += JSON.stringify(error.response.data);
+          }
+        } else {
+          msg += error.message;
+        }
+        this.showMessage(msg, 'error', 'api');
       } finally {
         this.testing = false;
       }
