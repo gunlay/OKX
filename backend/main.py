@@ -8,6 +8,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
 import threading
 import json
+from fastapi.middleware.cors import CORSMiddleware
 
 # 导入自定义模块
 from models import Base, UserConfig, encrypt_text, decrypt_text
@@ -19,6 +20,15 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 app = FastAPI()
+
+# 允许所有来源跨域（开发环境用，生产建议指定域名）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 或指定前端地址如 ["http://13.158.74.102"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 scheduler = BackgroundScheduler()
 scheduler.start()
 lock = threading.Lock()
