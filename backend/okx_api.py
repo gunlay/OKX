@@ -37,7 +37,7 @@ class OKXClient:
         """发送请求"""
         url = f"{self.base_url}{endpoint}"
         timestamp = self._get_timestamp()
-        
+
         # 准备请求头
         headers = {
             'OK-ACCESS-KEY': self.api_key,
@@ -46,7 +46,14 @@ class OKXClient:
             'OK-ACCESS-PASSPHRASE': self.passphrase,
             'Content-Type': 'application/json'
         }
-        
+
+        # 打印请求头和参数，便于和 curl 对比
+        print("[OKX DEBUG] 请求URL:", url)
+        print("[OKX DEBUG] 请求方法:", method)
+        print("[OKX DEBUG] 请求头:", headers)
+        print("[OKX DEBUG] 请求params:", params)
+        print("[OKX DEBUG] 请求data:", data)
+
         try:
             if method == 'GET':
                 response = requests.get(url, headers=headers, params=params)
@@ -54,10 +61,10 @@ class OKXClient:
                 response = requests.post(url, headers=headers, json=data)
             else:
                 raise ValueError(f"Unsupported method: {method}")
-            
+
             response.raise_for_status()
             return response.json()
-            
+
         except requests.exceptions.RequestException as e:
             return {
                 'code': 'ERROR',
