@@ -35,13 +35,19 @@ class OKXClient:
     
     def _request(self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None) -> Dict[str, Any]:
         """发送请求"""
-        url = f"{self.base_url}{endpoint}"
+        # 确保endpoint不以斜杠开头，避免URL中出现双斜杠
+        if endpoint.startswith('/'):
+            endpoint = endpoint[1:]
+            
+        url = f"{self.base_url}/{endpoint}"
+        # 获取请求路径，用于签名
+        request_path = f"/api/v5/{endpoint}"
         timestamp = self._get_timestamp()
 
         # 准备请求头
         headers = {
             'OK-ACCESS-KEY': self.api_key,
-            'OK-ACCESS-SIGN': self._sign(timestamp, method, endpoint, json.dumps(data) if data else ''),
+            'OK-ACCESS-SIGN': self._sign(timestamp, method, request_path, json.dumps(data) if data else ''),
             'OK-ACCESS-TIMESTAMP': timestamp,
             'OK-ACCESS-PASSPHRASE': self.passphrase,
             'Content-Type': 'application/json'
@@ -49,6 +55,7 @@ class OKXClient:
 
         # 打印请求头和参数，便于和 curl 对比
         print("[OKX DEBUG] 请求URL:", url)
+        print("[OKX DEBUG] 请求路径(签名用):", request_path)
         print("[OKX DEBUG] 请求方法:", method)
         print("[OKX DEBUG] 请求头:", headers)
         print("[OKX DEBUG] 请求params:", params)
@@ -74,19 +81,19 @@ class OKXClient:
     
     def test_connection(self) -> Dict[str, Any]:
         """测试 API 连接"""
-        return self._request('GET', '/account/balance')
+        return self._request('GET', 'account/balance')
     
     def get_account_balance(self) -> Dict[str, Any]:
         """获取账户余额"""
-        return self._request('GET', '/account/balance')
+        return self._request('GET', 'account/balance')
     
     def get_trading_balance(self) -> Dict[str, Any]:
         """获取交易账户余额"""
-        return self._request('GET', '/account/balance', params={'instType': 'SPOT'})
+        return self._request('GET', 'account/balance', params={'instType': 'SPOT'})
     
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         """获取币种价格"""
-        return self._request('GET', '/market/ticker', params={'instId': symbol})
+        return self._request('GET', 'market/ticker', params={'instId': symbol})
     
     def place_order(self, symbol: str, side: str, order_type: str, size: str, price: Optional[str] = None) -> Dict[str, Any]:
         """下单"""
@@ -100,7 +107,7 @@ class OKXClient:
         if price:
             data['px'] = price
         
-        return self._request('POST', '/trade/order', data=data)
+        return self._request('POST', 'trade/order', data=data)
     
     def get_order_history(self, symbol: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
         """获取订单历史"""
@@ -108,4 +115,4 @@ class OKXClient:
         if symbol:
             params['instId'] = symbol
         
-        return self._request('GET', '/trade/orders-history', params=params) 
+        return self._request('GET', 'trade/orders-history', params=params) 
