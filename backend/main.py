@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from fastapi.middleware.cors import CORSMiddleware
+import pytz
 
 # 导入自定义模块
 from models import Base, UserConfig, DCAPlan, Transaction, encrypt_text, decrypt_text
@@ -46,7 +47,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-scheduler = BackgroundScheduler()
+
+# 使用Asia/Shanghai时区
+TIMEZONE = pytz.timezone('Asia/Shanghai')
+
+# 配置调度器，使用Asia/Shanghai时区
+scheduler = BackgroundScheduler(timezone=TIMEZONE)
 scheduler.start()
 lock = threading.Lock()
 
@@ -104,6 +110,23 @@ def execute_dca_task(plan_id: int):
                 logger.warning(f"任务 {plan_id} 不存在或已禁用，跳过执行")
                 return
             
+            # 检查是否已经执行过（防止重复执行）
+            now = datetime.now(TIMEZONE)
+            today = now.date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            
+            # 检查今天是否已经执行过该任务
+            existing_transaction = db.query(Transaction).filter(
+                Transaction.plan_id == plan_id,
+                Transaction.executed_at >= today_start,
+                Transaction.executed_at <= today_end
+            ).first()
+            
+            if existing_transaction:
+                logger.info(f"任务 {plan_id} 今天已经执行过，跳过执行")
+                return
+            
             # 获取API配置
             config = db.query(UserConfig).first()
             if not config:
@@ -143,7 +166,7 @@ def execute_dca_task(plan_id: int):
                     direction=plan.direction or "buy",
                     status="success",
                     response=json.dumps(order_result),
-                    executed_at=datetime.utcnow()
+                    executed_at=datetime.now(TIMEZONE)
                 )
                 db.add(transaction)
                 db.commit()
@@ -157,7 +180,7 @@ def execute_dca_task(plan_id: int):
                     direction=plan.direction or "buy",
                     status="failed",
                     response=json.dumps(order_result),
-                    executed_at=datetime.utcnow()
+                    executed_at=datetime.now(TIMEZONE)
                 )
                 db.add(transaction)
                 db.commit()
@@ -193,10 +216,10 @@ def schedule_task(plan):
     
     # 根据频率创建触发器
     if plan.frequency == "daily":
-        trigger = CronTrigger(hour=hour, minute=minute)
+        trigger = CronTrigger(hour=hour, minute=minute, timezone=TIMEZONE)
         logger.info(f"任务 {plan.id} 调度为每天 {hour:02d}:{minute:02d}")
     elif plan.frequency == "weekly" and plan.day_of_week is not None:
-        trigger = CronTrigger(day_of_week=plan.day_of_week, hour=hour, minute=minute)
+        trigger = CronTrigger(day_of_week=plan.day_of_week, hour=hour, minute=minute, timezone=TIMEZONE)
         logger.info(f"任务 {plan.id} 调度为每周 {plan.day_of_week} {hour:02d}:{minute:02d}")
     elif plan.frequency == "monthly":
         if plan.month_days and len(plan.month_days) > 0:
@@ -209,13 +232,16 @@ def schedule_task(plan):
                         scheduler.remove_job(day_job_id)
                         logger.info(f"移除现有月度任务调度 {day_job_id}")
                     
-                    day_trigger = CronTrigger(day=day, hour=hour, minute=minute)
+                    day_trigger = CronTrigger(day=day, hour=hour, minute=minute, timezone=TIMEZONE)
                     scheduler.add_job(
                         execute_dca_task,
                         trigger=day_trigger,
                         args=[plan.id],
                         id=day_job_id,
-                        replace_existing=True
+                        replace_existing=True,
+                        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
+                        coalesce=True,  # 合并错过的执行
+                        max_instances=1  # 最多同时运行1个实例
                     )
                     logger.info(f"任务 {plan.id} 调度为每月 {day}日 {hour:02d}:{minute:02d}, job_id={day_job_id}")
                 
@@ -224,11 +250,11 @@ def schedule_task(plan):
             except (json.JSONDecodeError, ValueError) as e:
                 logger.error(f"解析月份日期失败: {str(e)}, 原始数据: {plan.month_days}")
                 # 如果解析失败，回退到默认行为：每月1日执行
-                trigger = CronTrigger(day=1, hour=hour, minute=minute)
+                trigger = CronTrigger(day=1, hour=hour, minute=minute, timezone=TIMEZONE)
                 logger.info(f"任务 {plan.id} 解析月份日期失败，回退到每月1日 {hour:02d}:{minute:02d}")
         else:
             # 如果没有指定日期，默认每月1日执行
-            trigger = CronTrigger(day=1, hour=hour, minute=minute)
+            trigger = CronTrigger(day=1, hour=hour, minute=minute, timezone=TIMEZONE)
             logger.info(f"任务 {plan.id} 调度为每月1日 {hour:02d}:{minute:02d}")
     else:
         logger.error(f"任务 {plan.id} 频率配置错误: {plan.frequency}")
@@ -240,9 +266,20 @@ def schedule_task(plan):
         trigger=trigger,
         args=[plan.id],
         id=job_id,
-        replace_existing=True
+        replace_existing=True,
+        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
+        coalesce=True,  # 合并错过的执行
+        max_instances=1  # 最多同时运行1个实例
     )
     logger.info(f"成功添加任务调度 {job_id}")
+    
+    # 检查任务是否成功添加
+    job = scheduler.get_job(job_id)
+    if job:
+        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "未调度"
+        logger.info(f"任务 {plan.id} 下次执行时间: {next_run}")
+    else:
+        logger.error(f"任务 {plan.id} 调度失败，未找到对应的任务")
 
 # 打印所有调度任务
 def print_all_jobs():
@@ -273,6 +310,22 @@ def init_scheduler():
 def startup_event():
     logger.info("服务启动，初始化调度器")
     init_scheduler()
+
+# 添加手动执行任务接口
+@app.post("/api/dca-plan/{plan_id}/execute")
+def manual_execute_plan(plan_id: int):
+    db = next(get_db())
+    db_plan = db.query(DCAPlan).filter(DCAPlan.id == plan_id).first()
+    if not db_plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    
+    if db_plan.status != "enabled":
+        raise HTTPException(status_code=400, detail="Cannot execute disabled plan")
+    
+    logger.info(f"手动执行任务 {plan_id}")
+    execute_dca_task(plan_id)
+    
+    return {"message": f"任务 {plan_id} 已手动执行"}
 
 # 定投计划相关接口
 @app.post("/api/dca-plan", response_model=DCAPlanOut)
@@ -419,7 +472,7 @@ def save_api_config(config: ApiConfig):
         existing_config.api_key = encrypt_text(config.api_key)
         existing_config.secret_key = encrypt_text(config.secret_key)
         existing_config.passphrase = encrypt_text(config.passphrase)
-        existing_config.updated_at = datetime.utcnow()
+        existing_config.updated_at = datetime.now(TIMEZONE)
     else:
         # 创建新配置
         new_config = UserConfig(
@@ -456,7 +509,7 @@ def save_coin_config(config: CoinConfig):
     if existing_config:
         # 更新现有配置
         existing_config.selected_coins = json.dumps(config.selected_coins)
-        existing_config.updated_at = datetime.utcnow()
+        existing_config.updated_at = datetime.now(TIMEZONE)
     else:
         # 创建新配置
         new_config = UserConfig(selected_coins=json.dumps(config.selected_coins))
