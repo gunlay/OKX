@@ -62,17 +62,17 @@
                 <span class="value">{{ transaction.symbol }}</span>
               </div>
             </div>
-            <!-- 成交时间和状态放一排显示 -->
+            <!-- 状态和成交时间放一排显示 -->
             <div class="info-row">
-              <div class="info-item">
-                <span class="label">成交时间:</span>
-                <span class="value">{{ formatDate(transaction.executed_at) }}</span>
-              </div>
               <div class="info-item">
                 <span class="label">状态:</span>
                 <span class="value" :class="transaction.status">
                   {{ transaction.status === 'success' ? '成功' : '失败' }}
                 </span>
+              </div>
+              <div class="info-item">
+                <span class="label">成交时间:</span>
+                <span class="value">{{ formatDate(transaction.executed_at) }}</span>
               </div>
             </div>
           </div>
@@ -230,10 +230,11 @@ export default {
 
 .date-input input {
   width: 100%;
-  padding: 8px 12px;
+  padding: 8px 6px;
   border: 1px solid #d9d9d9;
   border-radius: 6px;
   font-size: 14px;
+  box-sizing: border-box;
 }
 
 .search-btn {
@@ -318,22 +319,24 @@ export default {
   flex: 1;
   display: flex;
   align-items: center;
-  overflow: hidden; /* 防止内容溢出 */
+  min-width: 0; /* 允许收缩 */
 }
 
 .label {
   color: #666;
   font-size: 14px;
-  margin-right: 8px;
+  margin-right: 6px;
   white-space: nowrap;
+  flex-shrink: 0; /* 标签不收缩 */
 }
 
 .value {
   color: #333;
   font-size: 14px;
   font-weight: 500;
-  flex: 1;
-  text-align: left;
+  white-space: nowrap; /* 不换行 */
+  overflow: hidden;
+  text-overflow: ellipsis; /* 超长显示省略号 */
 }
 
 .value.success {
@@ -401,23 +404,23 @@ export default {
   }
   
   .filter-row {
-    gap: 8px;
+    gap: 6px;
     margin-bottom: 12px;
   }
   
   .filter-select {
-    padding: 10px 8px;
+    padding: 8px 6px;
     font-size: 16px; /* 防止iOS缩放 */
   }
   
   .date-input input {
-    padding: 10px 8px;
+    padding: 8px 4px;
     font-size: 16px; /* 防止iOS缩放 */
   }
   
   .date-input label {
-    font-size: 13px;
-    margin-bottom: 4px;
+    font-size: 12px;
+    margin-bottom: 3px;
   }
   
   .transaction-item {
@@ -434,44 +437,22 @@ export default {
   
   .info-row {
     margin-bottom: 6px;
-    gap: 10px;
+    gap: 8px;
   }
   
   .info-item {
-    min-width: 0; /* 允许flex项目收缩 */
+    min-width: 0;
+    max-width: 50%; /* 限制最大宽度 */
   }
   
   .label {
-    font-size: 13px;
-    margin-right: 6px;
-    min-width: fit-content;
+    font-size: 12px;
+    margin-right: 4px;
   }
   
   .value {
-    font-size: 13px;
-    word-break: break-all; /* 长文本换行 */
-  }
-}
-
-/* 超小屏幕适配 */
-@media (max-width: 480px) {
-  .transactions {
-    padding: 8px;
-  }
-  
-  .filter-bar {
-    padding: 10px;
-  }
-  
-  .info-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-  }
-  
-  .label {
-    margin-right: 0;
-    margin-bottom: 2px;
+    font-size: 12px;
+    max-width: 100px; /* 限制值的最大宽度 */
   }
 }
 </style> 
