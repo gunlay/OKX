@@ -318,6 +318,7 @@ export default {
   flex: 1;
   display: flex;
   align-items: center;
+  overflow: hidden; /* 防止内容溢出 */
 }
 
 .label {
@@ -331,6 +332,8 @@ export default {
   color: #333;
   font-size: 14px;
   font-weight: 500;
+  flex: 1;
+  text-align: left;
 }
 
 .value.success {
@@ -388,21 +391,87 @@ export default {
 }
 
 /* 移动端适配 */
-@media (max-width: 480px) {
+@media (max-width: 768px) {
   .transactions {
-    padding: 15px;
+    padding: 10px;
+  }
+  
+  .filter-bar {
+    padding: 12px;
   }
   
   .filter-row {
-    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
   }
   
-  .date-filter {
-    flex-direction: column;
+  .filter-select {
+    padding: 10px 8px;
+    font-size: 16px; /* 防止iOS缩放 */
   }
   
-  .transaction-content {
+  .date-input input {
+    padding: 10px 8px;
+    font-size: 16px; /* 防止iOS缩放 */
+  }
+  
+  .date-input label {
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  
+  .transaction-item {
+    padding: 12px;
+  }
+  
+  .transaction-header {
+    margin-bottom: 10px;
+  }
+  
+  .transaction-id {
+    font-size: 16px;
+  }
+  
+  .info-row {
+    margin-bottom: 6px;
+    gap: 10px;
+  }
+  
+  .info-item {
+    min-width: 0; /* 允许flex项目收缩 */
+  }
+  
+  .label {
+    font-size: 13px;
+    margin-right: 6px;
+    min-width: fit-content;
+  }
+  
+  .value {
+    font-size: 13px;
+    word-break: break-all; /* 长文本换行 */
+  }
+}
+
+/* 超小屏幕适配 */
+@media (max-width: 480px) {
+  .transactions {
+    padding: 8px;
+  }
+  
+  .filter-bar {
+    padding: 10px;
+  }
+  
+  .info-item {
     flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  
+  .label {
+    margin-right: 0;
+    margin-bottom: 2px;
   }
 }
 </style> 
