@@ -111,22 +111,8 @@ def execute_dca_task(plan_id: int):
                 logger.warning(f"任务 {plan_id} 不存在或已禁用，跳过执行")
                 return
             
-            # 检查是否已经执行过（防止重复执行）
-            now = datetime.now(TIMEZONE)
-            today = now.date()
-            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
-            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
-            
-            # 检查今天是否已经执行过该任务
-            existing_transaction = db.query(Transaction).filter(
-                Transaction.plan_id == plan_id,
-                Transaction.executed_at >= today_start,
-                Transaction.executed_at <= today_end
-            ).first()
-            
-            if existing_transaction:
-                logger.info(f"任务 {plan_id} 今天已经执行过，跳过执行")
-                return
+            # 移除重复执行检查，任务到时间就执行
+            logger.info(f"任务 {plan_id} 开始执行交易")
             
             # 获取API配置
             config = db.query(UserConfig).first()
@@ -240,7 +226,7 @@ def schedule_task(plan):
                         args=[plan.id],
                         id=day_job_id,
                         replace_existing=True,
-                        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
+                        misfire_grace_time=300,  # 允许任务最多延迟5分钟执行
                         coalesce=True,  # 合并错过的执行
                         max_instances=1  # 最多同时运行1个实例
                     )
@@ -268,7 +254,7 @@ def schedule_task(plan):
         args=[plan.id],
         id=job_id,
         replace_existing=True,
-        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
+                        misfire_grace_time=300,  # 允许任务最多延迟5分钟执行
         coalesce=True,  # 合并错过的执行
         max_instances=1  # 最多同时运行1个实例
     )
