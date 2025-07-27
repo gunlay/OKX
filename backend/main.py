@@ -550,6 +550,7 @@ def get_transactions(
     transactions = query.order_by(Transaction.executed_at.desc()).limit(limit).all()
     
     # 计算每个任务的执行次数
+    # 计算每个任务的执行次数并解析交易详情
     result = []
     for transaction in transactions:
         # 计算该任务在此交易之前的执行次数
@@ -558,6 +559,25 @@ def get_transactions(
             Transaction.executed_at <= transaction.executed_at,
             Transaction.status == "success"
         ).count()
+        
+        # 解析交易响应获取成交价格和数量
+        trade_price = None
+        trade_quantity = None
+        
+        if transaction.status == "success" and transaction.response:
+            try:
+                response_data = json.loads(transaction.response)
+                # OKX API响应格式：{"code":"0","data":[{"ordId":"xxx","fillPx":"xxx","fillSz":"xxx",...}]}
+                if response_data.get('code') == '0' and response_data.get('data'):
+                    order_data = response_data['data'][0]
+                    # fillPx: 成交价格, fillSz: 成交数量
+                    if 'fillPx' in order_data and order_data['fillPx']:
+                        trade_price = float(order_data['fillPx'])
+                    if 'fillSz' in order_data and order_data['fillSz']:
+                        trade_quantity = float(order_data['fillSz'])
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                # 如果解析失败，保持为None
+                pass
         
         result.append({
             "id": transaction.id,
@@ -569,7 +589,9 @@ def get_transactions(
             "direction": transaction.direction,
             "status": transaction.status,
             "response": transaction.response,
-            "executed_at": transaction.executed_at
+            "executed_at": transaction.executed_at,
+            "trade_price": trade_price,
+            "trade_quantity": trade_quantity
         })
     
     return result

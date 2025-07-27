@@ -70,13 +70,13 @@
               <div class="info-item">
                 <span class="label">成交价格:</span>
                 <span class="value">
-                  {{ transaction.trade_price ? `$${formatNumber(transaction.trade_price)}` : '-' }}
+                  {{ transaction.trade_price ? '$' + formatNumber(transaction.trade_price) : '-' }}
                 </span>
               </div>
               <div class="info-item">
                 <span class="label">成交数量:</span>
                 <span class="value">
-                  {{ transaction.trade_quantity ? formatQuantity(transaction.trade_quantity) : '-' }}
+                  {{ formatQuantity(transaction.trade_quantity) }}
                 </span>
               </div>
             </div>
@@ -193,7 +193,6 @@ export default {
     },
     
     formatDate(timestamp) {
-    formatDate(timestamp) {
       const date = new Date(timestamp);
       return date.toLocaleString('zh-CN', {
         year: 'numeric',
@@ -205,7 +204,7 @@ export default {
     },
     
     formatQuantity(quantity) {
-      // 格式化数量，去掉多余的0
+      if (!quantity) return '-';
       return parseFloat(quantity).toString();
     }
   }
@@ -504,4 +503,4 @@ export default {
     max-width: 100px; /* 限制值的最大宽度 */
   }
 }
-</style> 
+</style>
