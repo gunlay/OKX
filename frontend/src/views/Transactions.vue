@@ -43,7 +43,10 @@
     <div v-else-if="transactions.length > 0" class="transaction-list">
       <div v-for="transaction in transactions" :key="transaction.id" class="transaction-item">
         <div class="transaction-header">
-          <span class="transaction-id">#{{ transaction.id }}</span>
+          <div class="task-info">
+            <span class="task-name">{{ transaction.plan_title }}</span>
+            <span class="execution-count">第{{ transaction.execution_count }}次</span>
+          </div>
           <span class="transaction-direction" :class="transaction.direction">
             {{ transaction.direction === 'buy' ? '买入' : '卖出' }}
           </span>
@@ -273,9 +276,25 @@ export default {
   margin-bottom: 12px;
 }
 
-.transaction-id {
+.task-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-name {
   font-weight: 600;
   color: #333;
+  font-size: 16px;
+}
+
+.execution-count {
+  font-size: 12px;
+  color: #666;
+  background: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
 }
 
 .transaction-direction {
@@ -431,8 +450,17 @@ export default {
     margin-bottom: 10px;
   }
   
-  .transaction-id {
-    font-size: 16px;
+  .task-info {
+    gap: 6px;
+  }
+  
+  .task-name {
+    font-size: 15px;
+  }
+  
+  .execution-count {
+    font-size: 11px;
+    padding: 1px 4px;
   }
   
   .info-row {

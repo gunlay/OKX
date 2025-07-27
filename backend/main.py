@@ -519,7 +519,19 @@ def get_transactions(
     limit: int = 100
 ):
     db = next(get_db())
-    query = db.query(Transaction)
+    
+    # 联表查询，获取任务名称
+    query = db.query(
+        Transaction.id,
+        Transaction.plan_id,
+        Transaction.symbol,
+        Transaction.amount,
+        Transaction.direction,
+        Transaction.status,
+        Transaction.response,
+        Transaction.executed_at,
+        DCAPlan.title.label('plan_title')
+    ).outerjoin(DCAPlan, Transaction.plan_id == DCAPlan.id)
     
     if symbol:
         query = query.filter(Transaction.symbol == symbol)
@@ -536,7 +548,31 @@ def get_transactions(
         query = query.filter(Transaction.direction == direction)
     
     transactions = query.order_by(Transaction.executed_at.desc()).limit(limit).all()
-    return transactions
+    
+    # 计算每个任务的执行次数
+    result = []
+    for transaction in transactions:
+        # 计算该任务在此交易之前的执行次数
+        execution_count = db.query(Transaction).filter(
+            Transaction.plan_id == transaction.plan_id,
+            Transaction.executed_at <= transaction.executed_at,
+            Transaction.status == "success"
+        ).count()
+        
+        result.append({
+            "id": transaction.id,
+            "plan_id": transaction.plan_id,
+            "plan_title": transaction.plan_title or f"任务{transaction.plan_id}",
+            "execution_count": execution_count,
+            "symbol": transaction.symbol,
+            "amount": transaction.amount,
+            "direction": transaction.direction,
+            "status": transaction.status,
+            "response": transaction.response,
+            "executed_at": transaction.executed_at
+        })
+    
+    return result
 
 # 配置中心相关接口
 @app.post("/api/config/api")
