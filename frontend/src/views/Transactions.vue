@@ -2,6 +2,7 @@
   <div class="transactions">
     <!-- 筛选栏 -->
     <div class="filter-bar">
+      <!-- 币种和方向并排显示 -->
       <div class="filter-row">
         <select v-model="filters.symbol" class="filter-select">
           <option value="">全部币种</option>
@@ -15,7 +16,8 @@
         </select>
       </div>
       
-      <div class="date-filter">
+      <!-- 开始日期和结束日期并排显示 -->
+      <div class="filter-row">
         <div class="date-input">
           <label>开始日期</label>
           <input type="date" v-model="filters.startDate" />
@@ -49,23 +51,29 @@
         
         <div class="transaction-content">
           <div class="transaction-info">
+            <!-- 成交金额和币种放一排显示 -->
             <div class="info-row">
-              <span class="label">币种:</span>
-              <span class="value">{{ transaction.symbol }}</span>
+              <div class="info-item">
+                <span class="label">成交金额:</span>
+                <span class="value">${{ formatNumber(transaction.amount) }}</span>
+              </div>
+              <div class="info-item">
+                <span class="label">币种:</span>
+                <span class="value">{{ transaction.symbol }}</span>
+              </div>
             </div>
+            <!-- 成交时间和状态放一排显示 -->
             <div class="info-row">
-              <span class="label">成交金额:</span>
-              <span class="value">${{ formatNumber(transaction.amount) }}</span>
-            </div>
-            <div class="info-row">
-              <span class="label">状态:</span>
-              <span class="value" :class="transaction.status">
-                {{ transaction.status === 'success' ? '成功' : '失败' }}
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="label">成交时间:</span>
-              <span class="value">{{ formatDate(transaction.executed_at) }}</span>
+              <div class="info-item">
+                <span class="label">成交时间:</span>
+                <span class="value">{{ formatDate(transaction.executed_at) }}</span>
+              </div>
+              <div class="info-item">
+                <span class="label">状态:</span>
+                <span class="value" :class="transaction.status">
+                  {{ transaction.status === 'success' ? '成功' : '失败' }}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -209,12 +217,6 @@ export default {
   font-size: 14px;
 }
 
-.date-filter {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 15px;
-}
-
 .date-input {
   flex: 1;
 }
@@ -304,6 +306,7 @@ export default {
 
 .info-row {
   display: flex;
+  justify-content: space-between;
   margin-bottom: 8px;
 }
 
@@ -311,15 +314,23 @@ export default {
   margin-bottom: 0;
 }
 
+.info-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
 .label {
-  width: 80px;
   color: #666;
   font-size: 14px;
+  margin-right: 8px;
+  white-space: nowrap;
 }
 
 .value {
   color: #333;
   font-size: 14px;
+  font-weight: 500;
 }
 
 .value.success {
