@@ -133,12 +133,103 @@ def execute_dca_task(plan_id: int):
             
             # 执行交易
             side = "sell" if plan.direction == "sell" else "buy"
-            order_result = client.place_order(
-                symbol=plan.symbol,
-                side=side,
-                order_type="market",
-                size=str(plan.amount)
-            )
+            
+            if side == "sell":
+                # 卖出时需要先获取账户余额，计算要卖出的币种数量
+                balance_result = client.get_trading_balance()
+                if balance_result.get('code') != '0':
+                    logger.error(f"任务 {plan_id} 获取余额失败: {balance_result.get('msg', '未知错误')}")
+                    # 记录失败
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction or "buy",
+                        status="failed",
+                        response=json.dumps({"error": "获取余额失败", "detail": balance_result}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                # 获取要卖出的币种名称 (如BTC-USDT -> BTC)
+                base_currency = plan.symbol.split('-')[0]
+                
+                # 查找该币种的余额
+                available_balance = 0
+                for item in balance_result.get('data', []):
+                    for balance in item.get('details', []):
+                        if balance.get('ccy') == base_currency:
+                            available_balance = float(balance.get('availBal', 0))
+                            break
+                
+                if available_balance <= 0:
+                    logger.error(f"任务 {plan_id} 卖出失败: {base_currency} 余额不足，当前余额: {available_balance}")
+                    # 记录失败
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction or "buy",
+                        status="failed",
+                        response=json.dumps({"error": f"{base_currency} 余额不足", "available": available_balance}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                # 获取当前价格，计算要卖出的数量
+                ticker_result = client.get_ticker(plan.symbol)
+                if ticker_result.get('code') != '0' or not ticker_result.get('data'):
+                    logger.error(f"任务 {plan_id} 获取价格失败: {ticker_result}")
+                    # 记录失败
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction or "buy",
+                        status="failed",
+                        response=json.dumps({"error": "获取价格失败", "detail": ticker_result}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                current_price = float(ticker_result['data'][0].get('last', 0))
+                if current_price <= 0:
+                    logger.error(f"任务 {plan_id} 价格异常: {current_price}")
+                    return
+                
+                # 计算要卖出的币种数量 (USDT金额 / 当前价格)
+                sell_amount = plan.amount / current_price
+                
+                # 检查是否有足够余额
+                if sell_amount > available_balance:
+                    # 如果余额不足，卖出所有可用余额
+                    sell_amount = available_balance
+                    logger.warning(f"任务 {plan_id} 余额不足，将卖出全部可用余额: {sell_amount} {base_currency}")
+                
+                # 格式化卖出数量（保留适当小数位）
+                sell_size = f"{sell_amount:.8f}".rstrip('0').rstrip('.')
+                logger.info(f"任务 {plan_id} 卖出参数: {base_currency} 数量={sell_size}, 预期USDT={plan.amount}")
+                
+                order_result = client.place_order(
+                    symbol=plan.symbol,
+                    side=side,
+                    order_type="market",
+                    size=sell_size
+                )
+            else:
+                # 买入时直接使用USDT金额
+                order_result = client.place_order(
+                    symbol=plan.symbol,
+                    side=side,
+                    order_type="market",
+                    size=str(plan.amount)
+                )
             
             # 记录执行结果
             logger.info(f"任务 {plan_id} 执行结果: {order_result}")
