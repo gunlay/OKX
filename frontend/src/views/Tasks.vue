@@ -59,6 +59,13 @@
           </div>
           
           <div class="task-actions">
+            <button 
+              class="action-btn status" 
+              :class="task.status"
+              @click="toggleTaskStatus(task)"
+            >
+              {{ task.status === 'enabled' ? '有效' : '无效' }}
+            </button>
             <button class="action-btn edit" @click="editTask(task)">编辑</button>
             <button class="action-btn delete" @click="deleteTask(task.id)">删除</button>
           </div>
@@ -306,6 +313,25 @@ export default {
       this.showCreateModal = true;
     },
     
+    async toggleTaskStatus(task) {
+      const newStatus = task.status === 'enabled' ? 'disabled' : 'enabled';
+      const statusText = newStatus === 'enabled' ? '启用' : '暂停';
+      
+      if (confirm(`确定要${statusText}这个任务吗？`)) {
+        try {
+          await dcaApi.updatePlanStatus(task.id, newStatus);
+          // 更新本地任务状态
+          const index = this.tasks.findIndex(t => t.id === task.id);
+          if (index !== -1) {
+            this.tasks[index].status = newStatus;
+          }
+        } catch (error) {
+          console.error('更新任务状态失败:', error);
+          alert('更新任务状态失败: ' + (error.response?.data?.detail || error.message));
+        }
+      }
+    },
+    
     async deleteTask(id) {
       if (confirm('确定要删除这个任务吗？')) {
         try {
@@ -532,6 +558,23 @@ export default {
 .action-btn.delete {
   background-color: #ff4d4f;
   color: white;
+}
+
+.action-btn.status {
+  font-weight: bold;
+  border: 1px solid;
+}
+
+.action-btn.status.enabled {
+  background-color: #52c41a;
+  color: white;
+  border-color: #52c41a;
+}
+
+.action-btn.status.disabled {
+  background-color: #ff4d4f;
+  color: white;
+  border-color: #ff4d4f;
 }
 
 .loading-state, .empty-state {
