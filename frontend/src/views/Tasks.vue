@@ -30,7 +30,7 @@
     <div class="task-list" v-if="!loading && tasks.length > 0">
       <div v-for="task in filteredTasks" :key="task.id" class="task-item">
         <div class="task-header">
-          <span class="task-id">#{{ task.id }}</span>
+          <span class="task-title">{{ task.title || `任务${task.id}` }}</span>
           <span class="task-status" :class="task.status">
             {{ task.status === 'enabled' ? '有效' : '无效' }}
           </span>
@@ -89,6 +89,11 @@
         
         <div class="modal-body">
           <div class="form-group">
+            <label>任务标题</label>
+            <input type="text" v-model="taskForm.title" placeholder="输入任务标题" />
+          </div>
+          
+          <div class="form-group">
             <label>币种</label>
             <select v-model="taskForm.symbol" required>
               <option value="">请选择币种</option>
@@ -98,31 +103,37 @@
           
           <div class="form-group">
             <label>金额 (USDT)</label>
-            <input type="number" v-model="taskForm.amount" min="0.01" step="0.01" required />
+            <input type="number" v-model="taskForm.amount" placeholder="输入金额" required min="0.01" step="0.01" />
           </div>
           
           <div class="form-group">
             <label>方向</label>
-            <select v-model="taskForm.direction" required>
-              <option value="">请选择方向</option>
-              <option value="buy">买入</option>
-              <option value="sell">卖出</option>
-            </select>
+            <div class="radio-group">
+              <label>
+                <input type="radio" v-model="taskForm.direction" value="buy" />
+                买入
+              </label>
+              <label>
+                <input type="radio" v-model="taskForm.direction" value="sell" />
+                卖出
+              </label>
+            </div>
           </div>
           
           <div class="form-group">
             <label>频率</label>
             <select v-model="taskForm.frequency" required>
               <option value="">请选择频率</option>
-              <option value="daily">每日</option>
+              <option value="daily">每天</option>
               <option value="weekly">每周</option>
               <option value="monthly">每月</option>
             </select>
           </div>
           
-          <div v-if="taskForm.frequency === 'weekly'" class="form-group">
+          <!-- 每周选择 -->
+          <div class="form-group" v-if="taskForm.frequency === 'weekly'">
             <label>星期几</label>
-            <select v-model="taskForm.day_of_week">
+            <select v-model="taskForm.day_of_week" required>
               <option value="0">周一</option>
               <option value="1">周二</option>
               <option value="2">周三</option>
@@ -133,13 +144,15 @@
             </select>
           </div>
           
-          <div v-if="taskForm.frequency === 'monthly'" class="form-group">
-            <label>每月日期（可多选）</label>
-            <div class="date-grid">
+          <!-- 每月选择 -->
+          <div class="form-group" v-if="taskForm.frequency === 'monthly'">
+            <label>每月日期</label>
+            <div class="month-days">
               <div 
                 v-for="day in 31" 
-                :key="day"
-                :class="['date-item', { selected: isMonthDaySelected(day) }]"
+                :key="day" 
+                class="day-item" 
+                :class="{ selected: isMonthDaySelected(day) }"
                 @click="toggleMonthDay(day)"
               >
                 {{ day }}
@@ -148,20 +161,24 @@
           </div>
           
           <div class="form-group">
-            <label>执行时间</label>
+            <label>时间</label>
             <input type="time" v-model="taskForm.time" required />
           </div>
-
+          
           <div v-if="formError" class="form-error">
             {{ formError }}
           </div>
-        </div>
-        
-        <div class="modal-footer">
-          <button class="btn secondary" @click="showCreateModal = false">取消</button>
-          <button class="btn primary" @click="saveTask" :disabled="saving">
-            {{ saving ? '保存中...' : '保存' }}
-          </button>
+          
+          <div class="form-actions">
+            <button 
+              class="btn primary" 
+              @click="saveTask" 
+              :disabled="saving"
+            >
+              {{ saving ? '保存中...' : '保存' }}
+            </button>
+            <button class="btn secondary" @click="showCreateModal = false">取消</button>
+          </div>
         </div>
       </div>
     </div>
@@ -175,27 +192,28 @@ export default {
   name: 'Tasks',
   data() {
     return {
+      tasks: [],
+      availableCoins: [],
+      loading: false,
+      showCreateModal: false,
+      editingTask: null,
+      saving: false,
+      formError: '',
       filters: {
         symbol: '',
         status: '',
         direction: ''
       },
-      showCreateModal: false,
-      editingTask: null,
       taskForm: {
+        title: '',
         symbol: '',
         amount: '',
         direction: 'buy',
         frequency: '',
         day_of_week: null,
-        month_days: [],  // 存储每月选中的日期
+        month_days: [],
         time: ''
-      },
-      tasks: [],
-      availableCoins: [],
-      loading: false,
-      saving: false,
-      formError: ''
+      }
     }
   },
   computed: {
@@ -276,6 +294,7 @@ export default {
     editTask(task) {
       this.editingTask = task;
       this.taskForm = { 
+        title: task.title || '',
         symbol: task.symbol,
         amount: task.amount,
         direction: task.direction || 'buy',
@@ -323,6 +342,7 @@ export default {
       try {
         // 准备提交数据
         const planData = {
+          title: this.taskForm.title,
           symbol: this.taskForm.symbol,
           amount: parseFloat(this.taskForm.amount),
           frequency: this.taskForm.frequency,
@@ -359,6 +379,7 @@ export default {
     
     resetForm() {
       this.taskForm = {
+        title: '',
         symbol: '',
         amount: '',
         direction: 'buy',
@@ -397,20 +418,20 @@ export default {
 .filter-select {
   flex: 1;
   padding: 8px 12px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid #ddd;
   border-radius: 6px;
-  font-size: 14px;
+  background-color: #f9f9f9;
 }
 
 .create-btn {
   width: 100%;
-  padding: 12px;
-  background: #1890ff;
+  padding: 10px;
+  background-color: #1890ff;
   color: white;
   border: none;
   border-radius: 6px;
-  font-size: 16px;
   cursor: pointer;
+  font-weight: bold;
 }
 
 .task-list {
@@ -422,43 +443,44 @@ export default {
 .task-item {
   background: white;
   border-radius: 12px;
-  padding: 15px;
+  overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .task-header {
+  padding: 12px 15px;
+  background-color: #f0f0f0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
 }
 
-.task-id {
-  font-weight: 600;
-  color: #333;
+.task-title {
+  font-weight: bold;
+  font-size: 16px;
 }
 
 .task-status {
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: bold;
 }
 
 .task-status.enabled {
-  background: #f6ffed;
-  color: #52c41a;
+  background-color: #52c41a;
+  color: white;
 }
 
 .task-status.disabled {
-  background: #fff2f0;
-  color: #ff4d4f;
+  background-color: #ff4d4f;
+  color: white;
 }
 
 .task-content {
+  padding: 15px;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
 }
 
 .task-info {
@@ -466,23 +488,18 @@ export default {
 }
 
 .info-row {
-  display: flex;
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
 }
 
-.info-row:last-child {
-  margin-bottom: 0;
-}
-
-.label {
+.info-row .label {
   width: 60px;
   color: #666;
-  font-size: 14px;
 }
 
-.value {
-  color: #333;
-  font-size: 14px;
+.info-row .value {
+  font-weight: 500;
 }
 
 .value.buy {
@@ -495,6 +512,7 @@ export default {
 
 .task-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -502,56 +520,52 @@ export default {
   padding: 6px 12px;
   border: none;
   border-radius: 4px;
-  font-size: 12px;
   cursor: pointer;
+  font-weight: 500;
 }
 
 .action-btn.edit {
-  background: #1890ff;
+  background-color: #1890ff;
   color: white;
 }
 
 .action-btn.delete {
-  background: #ff4d4f;
+  background-color: #ff4d4f;
   color: white;
 }
 
-.date-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.date-item {
-  padding: 8px 0;
+.loading-state, .empty-state {
   text-align: center;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.3s;
-  font-size: 14px;
+  padding: 40px 0;
 }
 
-.date-item:hover {
-  border-color: #1890ff;
-  background: #f0f8ff;
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #1890ff;
+  border-radius: 50%;
+  margin: 0 auto 20px;
+  animation: spin 1s linear infinite;
 }
 
-.date-item.selected {
-  background: #1890ff;
-  color: white;
-  border-color: #1890ff;
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
-/* 弹窗样式 */
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 10px;
+}
+
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background-color: rgba(0, 0, 0, 0.5);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -562,22 +576,21 @@ export default {
   background: white;
   border-radius: 12px;
   width: 90%;
-  max-width: 400px;
-  max-height: 80vh;
+  max-width: 500px;
+  max-height: 90vh;
   overflow-y: auto;
 }
 
 .modal-header {
+  padding: 15px;
+  border-bottom: 1px solid #eee;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #f0f0f0;
 }
 
 .modal-header h3 {
   margin: 0;
-  color: #333;
 }
 
 .close-btn {
@@ -585,11 +598,10 @@ export default {
   border: none;
   font-size: 24px;
   cursor: pointer;
-  color: #999;
 }
 
 .modal-body {
-  padding: 20px;
+  padding: 15px;
 }
 
 .form-group {
@@ -599,118 +611,82 @@ export default {
 .form-group label {
   display: block;
   margin-bottom: 5px;
-  color: #333;
   font-weight: 500;
 }
 
-.form-group input,
-.form-group select {
+.form-group input, .form-group select {
   width: 100%;
-  padding: 10px;
-  border: 1px solid #d9d9d9;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
   border-radius: 6px;
-  font-size: 14px;
+}
+
+.radio-group {
+  display: flex;
+  gap: 15px;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.month-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.day-item {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.day-item.selected {
+  background-color: #1890ff;
+  color: white;
+  border-color: #1890ff;
 }
 
 .form-error {
   color: #ff4d4f;
-  margin-top: 10px;
-  font-size: 14px;
-  padding: 8px;
-  background: #fff1f0;
-  border-radius: 4px;
+  margin-bottom: 15px;
 }
 
-.modal-footer {
+.form-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
-  padding: 20px;
-  border-top: 1px solid #f0f0f0;
 }
 
 .btn {
-  flex: 1;
-  padding: 10px;
+  padding: 8px 16px;
   border: none;
   border-radius: 6px;
-  font-size: 14px;
   cursor: pointer;
+  font-weight: 500;
 }
 
 .btn.primary {
-  background: #1890ff;
+  background-color: #1890ff;
   color: white;
 }
 
 .btn.secondary {
-  background: #f0f0f0;
+  background-color: #f0f0f0;
   color: #333;
 }
 
-.btn:disabled {
+.btn[disabled] {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-/* 加载状态 */
-.loading-state {
-  text-align: center;
-  padding: 40px 0;
-}
-
-.loading-spinner {
-  display: inline-block;
-  width: 30px;
-  height: 30px;
-  border: 3px solid rgba(24, 144, 255, 0.2);
-  border-radius: 50%;
-  border-top-color: #1890ff;
-  animation: spin 1s ease-in-out infinite;
-  margin-bottom: 10px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* 空状态 */
-.empty-state {
-  text-align: center;
-  padding: 40px 0;
-  color: #999;
-}
-
-.empty-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-}
-
-.empty-state p {
-  margin-bottom: 20px;
-}
-
-/* 移动端适配 */
-@media (max-width: 480px) {
-  .tasks {
-    padding: 15px;
-  }
-  
-  .filter-row {
-    flex-direction: column;
-  }
-  
-  .task-content {
-    flex-direction: column;
-    gap: 15px;
-  }
-  
-  .task-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
-  
-  .date-grid {
-    grid-template-columns: repeat(5, 1fr);
-  }
 }
 </style> 

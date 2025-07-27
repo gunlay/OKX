@@ -61,6 +61,7 @@ Base.metadata.create_all(bind=engine)
 
 # Pydantic 模型
 class DCAPlanCreate(BaseModel):
+    title: Optional[str] = None
     symbol: str
     amount: float
     frequency: str

@@ -23,6 +23,7 @@ class UserConfig(Base):
 class DCAPlan(Base):
     __tablename__ = "dca_plans"
     id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=True)  # 任务标题
     symbol = Column(String, index=True)
     amount = Column(Float)
     frequency = Column(String)  # daily, weekly, monthly
