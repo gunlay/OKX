@@ -65,6 +65,21 @@
                 <span class="value">{{ transaction.symbol }}</span>
               </div>
             </div>
+            <!-- 成功交易显示成交价格和成交数量 -->
+            <div v-if="transaction.status === 'success'" class="info-row">
+              <div class="info-item">
+                <span class="label">成交价格:</span>
+                <span class="value">
+                  {{ transaction.trade_price ? `$${formatNumber(transaction.trade_price)}` : '-' }}
+                </span>
+              </div>
+              <div class="info-item">
+                <span class="label">成交数量:</span>
+                <span class="value">
+                  {{ transaction.trade_quantity ? formatQuantity(transaction.trade_quantity) : '-' }}
+                </span>
+              </div>
+            </div>
             <!-- 状态和成交时间放一排显示 -->
             <div class="info-row">
               <div class="info-item">
@@ -178,6 +193,7 @@ export default {
     },
     
     formatDate(timestamp) {
+    formatDate(timestamp) {
       const date = new Date(timestamp);
       return date.toLocaleString('zh-CN', {
         year: 'numeric',
@@ -186,6 +202,11 @@ export default {
         hour: '2-digit',
         minute: '2-digit'
       });
+    },
+    
+    formatQuantity(quantity) {
+      // 格式化数量，去掉多余的0
+      return parseFloat(quantity).toString();
     }
   }
 }
