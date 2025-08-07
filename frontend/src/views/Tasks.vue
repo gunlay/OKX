@@ -31,14 +31,13 @@
       <div v-for="task in filteredTasks" :key="task.id" class="task-item">
         <div class="task-header">
           <span class="task-title">{{ task.title || `任务${task.id}` }}</span>
-          <div class="task-status-container">
-            <span class="task-status" :class="task.status">
-              {{ task.status === 'enabled' ? '有效' : '无效' }}
-            </span>
-            <button class="status-toggle-btn" @click="toggleTaskStatus(task)">
-              {{ task.status === 'enabled' ? '设为无效' : '设为有效' }}
-            </button>
-          </div>
+          <button 
+            class="task-status" 
+            :class="task.status"
+            @click="toggleTaskStatus(task)"
+          >
+            {{ task.status === 'enabled' ? '有效' : '无效' }}
+          </button>
         </div>
         
         <div class="task-content">
@@ -477,10 +476,13 @@ export default {
 }
 
 .task-status {
-  padding: 4px 8px;
+  padding: 4px 12px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: bold;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
 .task-status.enabled {
@@ -493,25 +495,8 @@ export default {
   color: white;
 }
 
-.task-status-container {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.status-toggle-btn {
-  padding: 4px 8px;
-  border: none;
-  border-radius: 4px;
-  background-color: #f0f0f0;
-  color: #333;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.status-toggle-btn:hover {
-  background-color: #e0e0e0;
+.task-status:hover {
+  opacity: 0.85;
 }
 
 .task-content {
