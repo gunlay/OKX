@@ -32,6 +32,7 @@ class DCAPlan(Base):
     time = Column(String)  # "10:00"
     direction = Column(String, default="buy")  # buy, sell
     status = Column(String, default="enabled")  # enabled, disabled
+    last_time_update = Column(DateTime, nullable=True)  # 记录最后一次时间修改，用于判断是否允许同一天再次执行
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

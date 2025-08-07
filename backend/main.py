@@ -117,15 +117,24 @@ def execute_dca_task(plan_id: int):
             today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
             today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
             
+            # 获取任务的最后时间更新时间
+            last_time_update = getattr(plan, 'last_time_update', None)
+            
             # 检查今天是否已经执行过该任务
-            existing_transaction = db.query(Transaction).filter(
+            query = db.query(Transaction).filter(
                 Transaction.plan_id == plan_id,
                 Transaction.executed_at >= today_start,
                 Transaction.executed_at <= today_end
-            ).first()
+            )
+            
+            # 如果任务时间有更新，只检查更新后的执行记录
+            if last_time_update and last_time_update.date() == today:
+                query = query.filter(Transaction.executed_at > last_time_update)
+            
+            existing_transaction = query.first()
             
             if existing_transaction:
-                logger.info(f"任务 {plan_id} 今天已经执行过，跳过执行")
+                logger.info(f"任务 {plan_id} 在当前时间设置下今天已经执行过，跳过执行")
                 return
             
             # 获取API配置
@@ -477,16 +486,22 @@ def update_dca_plan(plan_id: int, plan: DCAPlanCreate):
     for key, value in plan.dict().items():
         setattr(db_plan, key, value)
     
-    db.commit()
-    db.refresh(db_plan)
-    
-    # 检查是否修改了时间相关的设置
+    # 如果修改了时间，清除今天的执行记录标记，允许在新时间点再次执行
     time_changed = (
         original_time != db_plan.time or 
         original_frequency != db_plan.frequency or 
         original_day_of_week != db_plan.day_of_week or 
         original_month_days != db_plan.month_days
     )
+    
+    # 如果时间有变化，添加一个标记字段，表示允许在同一天再次执行
+    if time_changed:
+        # 添加一个特殊的字段到数据库，标记这个任务已经被修改过时间
+        db_plan.last_time_update = datetime.now(TIMEZONE)
+        logger.info(f"任务 {plan_id} 时间已修改，允许在新时间点再次执行")
+    
+    db.commit()
+    db.refresh(db_plan)
     
     # 更新调度，如果时间设置有变化，则检查是否需要立即执行
     schedule_task(db_plan, check_missed=time_changed)
