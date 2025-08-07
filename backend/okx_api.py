@@ -111,12 +111,33 @@ class OKXClient:
         return self._request('POST', 'trade/order', data=data)
     
     def get_order_history(self, symbol: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
+    def get_order_history(self, symbol: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
         """获取订单历史"""
         params = {'limit': limit}
         if symbol:
             params['instId'] = symbol
         
         return self._request('GET', 'trade/orders-history', params=params)
+    
+    def get_order_detail(self, order_id: str) -> Dict[str, Any]:
+        """获取订单详情"""
+        params = {'ordId': order_id}
+        return self._request('GET', 'trade/order', params=params)
+
+    def get_order_fills(self, order_id: str) -> Dict[str, Any]:
+        """获取订单成交明细"""
+        params = {'ordId': order_id}
+        return self._request('GET', 'trade/fills', params=params)
+        
+    def get_bills_details(self, inst_type: str = 'SPOT', begin_time: Optional[str] = None, end_time: Optional[str] = None) -> Dict[str, Any]:
+        """获取账单流水详情（最近7天）"""
+        params = {'instType': inst_type}
+        if begin_time:
+            params['begin'] = begin_time
+        if end_time:
+            params['end'] = end_time
+        
+        return self._request('GET', 'account/bills', params=params)
     
     def get_popular_coins(self, limit: int = 100) -> List[str]:
         """获取热门币种列表

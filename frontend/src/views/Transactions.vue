@@ -2,7 +2,6 @@
   <div class="transactions">
     <!-- 筛选栏 -->
     <div class="filter-bar">
-      <!-- 币种和方向并排显示 -->
       <div class="filter-row">
         <select v-model="filters.symbol" class="filter-select">
           <option value="">全部币种</option>
@@ -16,8 +15,7 @@
         </select>
       </div>
       
-      <!-- 开始日期和结束日期并排显示 -->
-      <div class="filter-row">
+      <div class="date-filter">
         <div class="date-input">
           <label>开始日期</label>
           <input type="date" v-model="filters.startDate" />
@@ -43,10 +41,7 @@
     <div v-else-if="transactions.length > 0" class="transaction-list">
       <div v-for="transaction in transactions" :key="transaction.id" class="transaction-item">
         <div class="transaction-header">
-          <div class="task-info">
-            <span class="task-name">{{ transaction.plan_title }}</span>
-            <span class="execution-count">第{{ transaction.execution_count }}次</span>
-          </div>
+          <span class="transaction-id">#{{ transaction.id }}</span>
           <span class="transaction-direction" :class="transaction.direction">
             {{ transaction.direction === 'buy' ? '买入' : '卖出' }}
           </span>
@@ -54,44 +49,41 @@
         
         <div class="transaction-content">
           <div class="transaction-info">
-            <!-- 成交金额和币种放一排显示 -->
             <div class="info-row">
-              <div class="info-item">
-                <span class="label">成交金额:</span>
-                <span class="value">${{ formatNumber(transaction.amount) }}</span>
-              </div>
-              <div class="info-item">
-                <span class="label">币种:</span>
-                <span class="value">{{ transaction.symbol }}</span>
-              </div>
+              <span class="label">币种:</span>
+              <span class="value">{{ transaction.symbol }}</span>
             </div>
-            <!-- 成功交易显示成交价格和成交数量 -->
-            <div v-if="transaction.status === 'success'" class="info-row">
-              <div class="info-item">
-                <span class="label">成交价格:</span>
-                <span class="value">
-                  {{ transaction.trade_price ? '$' + formatNumber(transaction.trade_price) : '-' }}
+            <div class="info-row">
+              <span class="label">成交金额:</span>
+              <span class="value">${{ formatNumber(transaction.amount) }}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">成交价格:</span>
+              <span class="value">
+                <span v-if="transaction.trade_price">
+                  ${{ formatNumber(transaction.trade_price) }}
                 </span>
-              </div>
-              <div class="info-item">
-                <span class="label">成交数量:</span>
-                <span class="value">
+                <span v-else>-</span>
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="label">成交数量:</span>
+              <span class="value">
+                <span v-if="transaction.trade_quantity">
                   {{ formatQuantity(transaction.trade_quantity) }}
                 </span>
-              </div>
+                <span v-else>-</span>
+              </span>
             </div>
-            <!-- 状态和成交时间放一排显示 -->
             <div class="info-row">
-              <div class="info-item">
-                <span class="label">状态:</span>
-                <span class="value" :class="transaction.status">
-                  {{ transaction.status === 'success' ? '成功' : '失败' }}
-                </span>
-              </div>
-              <div class="info-item">
-                <span class="label">成交时间:</span>
-                <span class="value">{{ formatDate(transaction.executed_at) }}</span>
-              </div>
+              <span class="label">状态:</span>
+              <span class="value" :class="transaction.status">
+                {{ transaction.status === 'success' ? '成功' : '失败' }}
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="label">成交时间:</span>
+              <span class="value">{{ formatDate(transaction.executed_at) }}</span>
             </div>
           </div>
         </div>
@@ -203,9 +195,37 @@ export default {
       });
     },
     
-    formatQuantity(quantity) {
-      if (!quantity) return '-';
-      return parseFloat(quantity).toString();
+    formatQuantity(num) {
+      if (!num) return '-';
+      
+      const value = parseFloat(num);
+      
+      // 根据数值大小动态调整小数位数
+      if (value < 0.001) {
+        // 非常小的数值，保留8位小数
+        return value.toLocaleString('en-US', {
+          minimumFractionDigits: 8,
+          maximumFractionDigits: 8
+        });
+      } else if (value < 0.01) {
+        // 小数值，保留6位小数
+        return value.toLocaleString('en-US', {
+          minimumFractionDigits: 6,
+          maximumFractionDigits: 6
+        });
+      } else if (value < 1) {
+        // 中等数值，保留4位小数
+        return value.toLocaleString('en-US', {
+          minimumFractionDigits: 4,
+          maximumFractionDigits: 4
+        });
+      } else {
+        // 较大数值，保留2位小数
+        return value.toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
+      }
     }
   }
 }
@@ -240,6 +260,12 @@ export default {
   font-size: 14px;
 }
 
+.date-filter {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
 .date-input {
   flex: 1;
 }
@@ -253,11 +279,10 @@ export default {
 
 .date-input input {
   width: 100%;
-  padding: 8px 6px;
+  padding: 8px 12px;
   border: 1px solid #d9d9d9;
   border-radius: 6px;
   font-size: 14px;
-  box-sizing: border-box;
 }
 
 .search-btn {
@@ -296,25 +321,9 @@ export default {
   margin-bottom: 12px;
 }
 
-.task-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.task-name {
+.transaction-id {
   font-weight: 600;
   color: #333;
-  font-size: 16px;
-}
-
-.execution-count {
-  font-size: 12px;
-  color: #666;
-  background: #f5f5f5;
-  padding: 2px 6px;
-  border-radius: 10px;
-  white-space: nowrap;
 }
 
 .transaction-direction {
@@ -346,7 +355,6 @@ export default {
 
 .info-row {
   display: flex;
-  justify-content: space-between;
   margin-bottom: 8px;
 }
 
@@ -354,28 +362,15 @@ export default {
   margin-bottom: 0;
 }
 
-.info-item {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  min-width: 0; /* 允许收缩 */
-}
-
 .label {
+  width: 80px;
   color: #666;
   font-size: 14px;
-  margin-right: 6px;
-  white-space: nowrap;
-  flex-shrink: 0; /* 标签不收缩 */
 }
 
 .value {
   color: #333;
   font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap; /* 不换行 */
-  overflow: hidden;
-  text-overflow: ellipsis; /* 超长显示省略号 */
 }
 
 .value.success {
@@ -433,74 +428,21 @@ export default {
 }
 
 /* 移动端适配 */
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   .transactions {
-    padding: 10px;
-  }
-  
-  .filter-bar {
-    padding: 12px;
+    padding: 15px;
   }
   
   .filter-row {
-    gap: 6px;
-    margin-bottom: 12px;
+    flex-direction: column;
   }
   
-  .filter-select {
-    padding: 8px 6px;
-    font-size: 16px; /* 防止iOS缩放 */
+  .date-filter {
+    flex-direction: column;
   }
   
-  .date-input input {
-    padding: 8px 4px;
-    font-size: 16px; /* 防止iOS缩放 */
-  }
-  
-  .date-input label {
-    font-size: 12px;
-    margin-bottom: 3px;
-  }
-  
-  .transaction-item {
-    padding: 12px;
-  }
-  
-  .transaction-header {
-    margin-bottom: 10px;
-  }
-  
-  .task-info {
-    gap: 6px;
-  }
-  
-  .task-name {
-    font-size: 15px;
-  }
-  
-  .execution-count {
-    font-size: 11px;
-    padding: 1px 4px;
-  }
-  
-  .info-row {
-    margin-bottom: 6px;
-    gap: 8px;
-  }
-  
-  .info-item {
-    min-width: 0;
-    max-width: 50%; /* 限制最大宽度 */
-  }
-  
-  .label {
-    font-size: 12px;
-    margin-right: 4px;
-  }
-  
-  .value {
-    font-size: 12px;
-    max-width: 100px; /* 限制值的最大宽度 */
+  .transaction-content {
+    flex-direction: column;
   }
 }
 </style>

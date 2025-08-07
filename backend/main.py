@@ -111,8 +111,22 @@ def execute_dca_task(plan_id: int):
                 logger.warning(f"任务 {plan_id} 不存在或已禁用，跳过执行")
                 return
             
-            # 移除重复执行检查，任务到时间就执行
-            logger.info(f"任务 {plan_id} 开始执行交易")
+            # 检查是否已经执行过（防止重复执行）
+            now = datetime.now(TIMEZONE)
+            today = now.date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            
+            # 检查今天是否已经执行过该任务
+            existing_transaction = db.query(Transaction).filter(
+                Transaction.plan_id == plan_id,
+                Transaction.executed_at >= today_start,
+                Transaction.executed_at <= today_end
+            ).first()
+            
+            if existing_transaction:
+                logger.info(f"任务 {plan_id} 今天已经执行过，跳过执行")
+                return
             
             # 获取API配置
             config = db.query(UserConfig).first()
@@ -133,117 +147,83 @@ def execute_dca_task(plan_id: int):
             
             # 执行交易
             side = "sell" if plan.direction == "sell" else "buy"
+            order_result = client.place_order(
+                symbol=plan.symbol,
+                side=side,
+                order_type="market",
+                size=str(plan.amount)
+            )
             
-            if side == "sell":
-                # 卖出时需要先获取账户余额，计算要卖出的币种数量
-                balance_result = client.get_trading_balance()
-                if balance_result.get('code') != '0':
-                    logger.error(f"任务 {plan_id} 获取余额失败: {balance_result.get('msg', '未知错误')}")
-                    # 记录失败
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction or "buy",
-                        status="failed",
-                        response=json.dumps({"error": "获取余额失败", "detail": balance_result}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                # 获取要卖出的币种名称 (如BTC-USDT -> BTC)
-                base_currency = plan.symbol.split('-')[0]
-                
-                # 查找该币种的余额
-                available_balance = 0
-                for item in balance_result.get('data', []):
-                    for balance in item.get('details', []):
-                        if balance.get('ccy') == base_currency:
-                            available_balance = float(balance.get('availBal', 0))
-                            break
-                
-                if available_balance <= 0:
-                    logger.error(f"任务 {plan_id} 卖出失败: {base_currency} 余额不足，当前余额: {available_balance}")
-                    # 记录失败
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction or "buy",
-                        status="failed",
-                        response=json.dumps({"error": f"{base_currency} 余额不足", "available": available_balance}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                # 获取当前价格，计算要卖出的数量
-                ticker_result = client.get_ticker(plan.symbol)
-                if ticker_result.get('code') != '0' or not ticker_result.get('data'):
-                    logger.error(f"任务 {plan_id} 获取价格失败: {ticker_result}")
-                    # 记录失败
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction or "buy",
-                        status="failed",
-                        response=json.dumps({"error": "获取价格失败", "detail": ticker_result}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                current_price = float(ticker_result['data'][0].get('last', 0))
-                if current_price <= 0:
-                    logger.error(f"任务 {plan_id} 价格异常: {current_price}")
-                    return
-                
-                # 计算要卖出的币种数量 (USDT金额 / 当前价格)
-                sell_amount = plan.amount / current_price
-                
-                # 检查是否有足够余额
-                if sell_amount > available_balance:
-                    # 如果余额不足，卖出所有可用余额
-                    sell_amount = available_balance
-                    logger.warning(f"任务 {plan_id} 余额不足，将卖出全部可用余额: {sell_amount} {base_currency}")
-                
-                # 格式化卖出数量（保留适当小数位）
-                sell_size = f"{sell_amount:.8f}".rstrip('0').rstrip('.')
-                logger.info(f"任务 {plan_id} 卖出参数: {base_currency} 数量={sell_size}, 预期USDT={plan.amount}")
-                
-                order_result = client.place_order(
-                    symbol=plan.symbol,
-                    side=side,
-                    order_type="market",
-                    size=sell_size
-                )
-            else:
-                # 买入时直接使用USDT金额
-                order_result = client.place_order(
-                    symbol=plan.symbol,
-                    side=side,
-                    order_type="market",
-                    size=str(plan.amount)
-                )
-            
+            # 记录执行结果
             # 记录执行结果
             logger.info(f"任务 {plan_id} 执行结果: {order_result}")
             
             # 创建交易记录
             if order_result.get('code') == '0':
-                # 成功执行
+                # 成功执行，尝试获取订单详情来获取成交价格和数量
+                order_id = None
+                fill_details = None
+                if order_result.get('data') and len(order_result['data']) > 0:
+                    order_id = order_result['data'][0].get('ordId')
+                
+                # 获取成交详情
+                if order_id:
+                    import time
+                    # 等待2秒让成交数据生成
+                    time.sleep(2)
+                    
+                    for attempt in range(5):  # 最多重试5次
+                        try:
+                            # 先尝试获取订单详情
+                            order_detail = client.get_order_detail(order_id)
+                            if order_detail.get('code') == '0' and order_detail.get('data'):
+                                order_info = order_detail['data'][0]
+                                # 检查订单状态是否已完成
+                                if order_info.get('state') in ['filled', 'partially_filled']:
+                                    fill_details = {
+                                        'fillPx': order_info.get('avgPx'),  # 成交均价
+                                        'fillSz': order_info.get('accFillSz'),  # 累计成交数量
+                                        'ordId': order_id
+                                    }
+                                    logger.info(f"任务 {plan_id} 订单详情 (尝试{attempt+1}): {fill_details}")
+                                    break
+                                else:
+                                    logger.info(f"任务 {plan_id} 订单状态: {order_info.get('state')} (尝试{attempt+1})")
+                            
+                            # 如果订单详情没有成交信息，尝试成交明细API
+                            if not fill_details:
+                                fills_result = client.get_order_fills(order_id)
+                                if fills_result.get('code') == '0' and fills_result.get('data'):
+                                    fill_info = fills_result['data'][0]
+                                    fill_details = {
+                                        'fillPx': fill_info.get('fillPx'),  # 成交价格
+                                        'fillSz': fill_info.get('fillSz'),  # 成交数量
+                                        'ordId': order_id
+                                    }
+                                    logger.info(f"任务 {plan_id} 成交明细 (尝试{attempt+1}): {fill_details}")
+                                    break
+                            
+                            if attempt < 4:  # 不是最后一次尝试
+                                time.sleep(3)  # 等待3秒再重试
+                                
+                        except Exception as e:
+                            logger.warning(f"任务 {plan_id} 获取成交信息异常 (尝试{attempt+1}): {str(e)}")
+                            if attempt < 4:  # 不是最后一次尝试
+                                time.sleep(3)  # 等待3秒再重试
+                
+                # 构建完整的响应数据，包含成交详情
+                complete_response = {
+                    "order_result": order_result,
+                    "fill_details": fill_details
+                }
+                
                 transaction = Transaction(
                     plan_id=plan.id,
                     symbol=plan.symbol,
                     amount=plan.amount,
                     direction=plan.direction or "buy",
                     status="success",
-                    response=json.dumps(order_result),
+                    response=json.dumps(complete_response),
                     executed_at=datetime.now(TIMEZONE)
                 )
                 db.add(transaction)
@@ -317,7 +297,7 @@ def schedule_task(plan):
                         args=[plan.id],
                         id=day_job_id,
                         replace_existing=True,
-                        misfire_grace_time=300,  # 允许任务最多延迟5分钟执行
+                        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
                         coalesce=True,  # 合并错过的执行
                         max_instances=1  # 最多同时运行1个实例
                     )
@@ -345,7 +325,7 @@ def schedule_task(plan):
         args=[plan.id],
         id=job_id,
         replace_existing=True,
-                        misfire_grace_time=300,  # 允许任务最多延迟5分钟执行
+        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
         coalesce=True,  # 合并错过的执行
         max_instances=1  # 最多同时运行1个实例
     )
@@ -511,6 +491,7 @@ def update_plan_status(plan_id: int, status: str = Body(..., embed=True)):
 
 # 获取交易记录
 @app.get("/api/transactions")
+@app.get("/api/transactions")
 def get_transactions(
     symbol: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -549,7 +530,6 @@ def get_transactions(
     
     transactions = query.order_by(Transaction.executed_at.desc()).limit(limit).all()
     
-    # 计算每个任务的执行次数
     # 计算每个任务的执行次数并解析交易详情
     result = []
     for transaction in transactions:
@@ -567,15 +547,26 @@ def get_transactions(
         if transaction.status == "success" and transaction.response:
             try:
                 response_data = json.loads(transaction.response)
-                # OKX API响应格式：{"code":"0","data":[{"ordId":"xxx","fillPx":"xxx","fillSz":"xxx",...}]}
-                if response_data.get('code') == '0' and response_data.get('data'):
-                    order_data = response_data['data'][0]
-                    # fillPx: 成交价格, fillSz: 成交数量
-                    if 'fillPx' in order_data and order_data['fillPx']:
-                        trade_price = float(order_data['fillPx'])
-                    if 'fillSz' in order_data and order_data['fillSz']:
-                        trade_quantity = float(order_data['fillSz'])
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                
+                # 检查是否有成交详情
+                if 'fill_details' in response_data and response_data['fill_details']:
+                    fill_data = response_data['fill_details']
+                    # 成交价格和数量
+                    if 'fillPx' in fill_data and fill_data['fillPx']:
+                        trade_price = float(fill_data['fillPx'])
+                    if 'fillSz' in fill_data and fill_data['fillSz']:
+                        trade_quantity = float(fill_data['fillSz'])
+                
+                # 如果没有fill_details，尝试从order_result中获取
+                elif 'order_result' in response_data and response_data['order_result'].get('data'):
+                    order_data = response_data['order_result']['data'][0]
+                    if 'avgPx' in order_data and order_data['avgPx']:
+                        trade_price = float(order_data['avgPx'])
+                    if 'accFillSz' in order_data and order_data['accFillSz']:
+                        trade_quantity = float(order_data['accFillSz'])
+                        
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                logger.warning(f"解析交易响应失败: {str(e)}")
                 # 如果解析失败，保持为None
                 pass
         

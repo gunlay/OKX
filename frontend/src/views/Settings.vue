@@ -52,7 +52,7 @@
       <h3>交易币种配置</h3>
       <div class="form-group">
         <div class="coin-header">
-          <label>选择交易币种:</label>
+        <label>选择交易币种:</label>
           <button @click="loadPopularCoins" class="refresh-btn" :disabled="loadingCoins">
             {{ loadingCoins ? '加载中...' : '获取热门币种' }}
           </button>
