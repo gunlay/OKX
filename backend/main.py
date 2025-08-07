@@ -250,7 +250,7 @@ def execute_dca_task(plan_id: int):
             db.close()
 
 # 调度任务
-def schedule_task(plan):
+def schedule_task(plan, check_missed=False):
     job_id = f"dca_task_{plan.id}"
     
     # 如果已存在任务，先移除
@@ -336,6 +336,56 @@ def schedule_task(plan):
     if job:
         next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "未调度"
         logger.info(f"任务 {plan.id} 下次执行时间: {next_run}")
+        
+        # 检查是否需要立即执行一次任务（仅当check_missed为True时）
+        if check_missed and job.next_run_time:
+            now = datetime.now(TIMEZONE)
+            # 如果下次执行时间比当前时间晚很多（超过一个周期），可能是因为今天的执行时间已经过去
+            # 检查今天是否已经执行过
+            today = now.date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            
+            db = SessionLocal()
+            try:
+                # 检查今天是否已经执行过该任务
+                existing_transaction = db.query(Transaction).filter(
+                    Transaction.plan_id == plan.id,
+                    Transaction.executed_at >= today_start,
+                    Transaction.executed_at <= today_end
+                ).first()
+                
+                # 如果今天没有执行过，并且当前时间已经超过了计划执行时间，则立即执行一次
+                plan_hour, plan_minute = map(int, plan.time.split(":"))
+                plan_time_today = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+                plan_time_today = plan_time_today.replace(hour=plan_hour, minute=plan_minute)
+                
+                if not existing_transaction and now >= plan_time_today:
+                    # 检查是否符合执行条件（每周或每月的特定日期）
+                    should_execute = False
+                    
+                    if plan.frequency == "daily":
+                        should_execute = True
+                    elif plan.frequency == "weekly" and plan.day_of_week is not None:
+                        # 检查今天是否是指定的星期几
+                        if now.weekday() == plan.day_of_week:
+                            should_execute = True
+                    elif plan.frequency == "monthly" and plan.month_days:
+                        # 检查今天是否是指定的月份日期
+                        try:
+                            month_days = json.loads(plan.month_days)
+                            if now.day in month_days:
+                                should_execute = True
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                    
+                    if should_execute:
+                        logger.info(f"任务 {plan.id} 编辑后时间已过，立即执行一次")
+                        # 在新线程中执行，避免阻塞当前线程
+                        import threading
+                        threading.Thread(target=execute_dca_task, args=[plan.id]).start()
+            finally:
+                db.close()
     else:
         logger.error(f"任务 {plan.id} 调度失败，未找到对应的任务")
 
@@ -418,14 +468,28 @@ def update_dca_plan(plan_id: int, plan: DCAPlanCreate):
     
     logger.info(f"更新任务 {plan_id}: 币种: {plan.symbol}, 金额: {plan.amount}, 频率: {plan.frequency}")
     
+    # 保存原始时间信息，用于检测是否修改了时间
+    original_time = db_plan.time
+    original_frequency = db_plan.frequency
+    original_day_of_week = db_plan.day_of_week
+    original_month_days = db_plan.month_days
+    
     for key, value in plan.dict().items():
         setattr(db_plan, key, value)
     
     db.commit()
     db.refresh(db_plan)
     
-    # 更新调度
-    schedule_task(db_plan)
+    # 检查是否修改了时间相关的设置
+    time_changed = (
+        original_time != db_plan.time or 
+        original_frequency != db_plan.frequency or 
+        original_day_of_week != db_plan.day_of_week or 
+        original_month_days != db_plan.month_days
+    )
+    
+    # 更新调度，如果时间设置有变化，则检查是否需要立即执行
+    schedule_task(db_plan, check_missed=time_changed)
     
     # 打印所有调度任务
     print_all_jobs()
