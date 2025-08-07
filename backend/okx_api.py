@@ -53,14 +53,6 @@ class OKXClient:
             'Content-Type': 'application/json'
         }
 
-        # 打印请求头和参数，便于和 curl 对比
-        print("[OKX DEBUG] 请求URL:", url)
-        print("[OKX DEBUG] 请求路径(签名用):", request_path)
-        print("[OKX DEBUG] 请求方法:", method)
-        print("[OKX DEBUG] 请求头:", headers)
-        print("[OKX DEBUG] 请求params:", params)
-        print("[OKX DEBUG] 请求data:", data)
-
         try:
             if method == 'GET':
                 response = requests.get(url, headers=headers, params=params)
@@ -110,7 +102,6 @@ class OKXClient:
         
         return self._request('POST', 'trade/order', data=data)
     
-    def get_order_history(self, symbol: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
     def get_order_history(self, symbol: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
         """获取订单历史"""
         params = {'limit': limit}
@@ -205,4 +196,4 @@ def get_popular_coins_public(limit: int = 100) -> List[str]:
     
     except Exception as e:
         print(f"获取热门币种异常: {str(e)}")
-        return [] 
+        return []
