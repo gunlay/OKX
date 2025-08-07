@@ -31,13 +31,6 @@
       <div v-for="task in filteredTasks" :key="task.id" class="task-item">
         <div class="task-header">
           <span class="task-title">{{ task.title || `任务${task.id}` }}</span>
-          <button 
-            class="task-status" 
-            :class="task.status"
-            @click="toggleTaskStatus(task)"
-          >
-            {{ task.status === 'enabled' ? '有效' : '无效' }}
-          </button>
         </div>
         
         <div class="task-content">
@@ -64,6 +57,13 @@
           
           <div class="task-actions">
             <button class="action-btn edit" @click="editTask(task)">编辑</button>
+            <button 
+              class="action-btn status" 
+              :class="task.status"
+              @click="toggleTaskStatus(task)"
+            >
+              {{ task.status === 'enabled' ? '有效' : '无效' }}
+            </button>
             <button class="action-btn delete" @click="deleteTask(task.id)">删除</button>
           </div>
         </div>
@@ -549,6 +549,29 @@ export default {
 .action-btn.edit {
   background-color: #1890ff;
   color: white;
+}
+
+.action-btn.status {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn.status.enabled {
+  background-color: #52c41a;
+  color: white;
+}
+
+.action-btn.status.disabled {
+  background-color: #ff4d4f;
+  color: white;
+}
+
+.action-btn.status:hover {
+  opacity: 0.85;
 }
 
 .action-btn.delete {
