@@ -31,9 +31,14 @@
       <div v-for="task in filteredTasks" :key="task.id" class="task-item">
         <div class="task-header">
           <span class="task-title">{{ task.title || `任务${task.id}` }}</span>
-          <span class="task-status" :class="task.status">
-            {{ task.status === 'enabled' ? '有效' : '无效' }}
-          </span>
+          <div class="task-status-container">
+            <span class="task-status" :class="task.status">
+              {{ task.status === 'enabled' ? '有效' : '无效' }}
+            </span>
+            <button class="status-toggle-btn" @click="toggleTaskStatus(task)">
+              {{ task.status === 'enabled' ? '设为无效' : '设为有效' }}
+            </button>
+          </div>
         </div>
         
         <div class="task-content">
@@ -318,6 +323,17 @@ export default {
       }
     },
     
+    async toggleTaskStatus(task) {
+      const newStatus = task.status === 'enabled' ? 'disabled' : 'enabled';
+      try {
+        await dcaApi.updatePlanStatus(task.id, newStatus);
+        task.status = newStatus;
+      } catch (error) {
+        console.error('更新任务状态失败:', error);
+        alert('更新任务状态失败: ' + (error.response?.data?.detail || error.message));
+      }
+    },
+    
     async saveTask() {
       // 表单验证
       if (!this.taskForm.symbol || !this.taskForm.amount || !this.taskForm.direction || 
@@ -475,6 +491,27 @@ export default {
 .task-status.disabled {
   background-color: #ff4d4f;
   color: white;
+}
+
+.task-status-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-toggle-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background-color: #f0f0f0;
+  color: #333;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.status-toggle-btn:hover {
+  background-color: #e0e0e0;
 }
 
 .task-content {
