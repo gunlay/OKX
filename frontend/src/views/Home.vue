@@ -156,9 +156,8 @@ export default {
           this.refreshing = true;
         }
         
-        // 添加force_refresh参数
-        const url = forceRefresh ? '/api/assets/overview?force_refresh=true' : '/api/assets/overview';
-        const response = await assetApi.getOverview(url);
+        // 使用修改后的API函数，直接传递forceRefresh参数
+        const response = await assetApi.getOverview(forceRefresh);
         const data = response.data;
         
         if (data.error) {
