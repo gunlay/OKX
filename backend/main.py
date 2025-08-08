@@ -693,7 +693,6 @@ def calculate_max_drawdown(asset_history):
     
     return max_drawdown
 
-@app.get("/api/assets/history")
 def calculate_sharpe_ratio(result, risk_free_rate=0.02):
     """计算夏普比率
     
@@ -740,6 +739,7 @@ def calculate_sharpe_ratio(result, risk_free_rate=0.02):
         logger.warning(f"计算夏普比率异常: {str(e)}")
         return 0
 
+@app.get("/api/assets/history")
 def get_asset_history(days: int = 30, include_metrics: bool = False):
     """获取指定天数的资产历史数据，可选择是否包含风险指标"""
     db = next(get_db())
