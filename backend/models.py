@@ -48,6 +48,16 @@ class Transaction(Base):
     response = Column(Text)  # 存储API响应
     executed_at = Column(DateTime, default=datetime.utcnow)
 
+# 资产历史记录模型
+class AssetHistory(Base):
+    __tablename__ = "asset_history"
+    id = Column(Integer, primary_key=True, index=True)
+    total_assets = Column(Float)
+    total_investment = Column(Float)
+    total_profit = Column(Float)
+    asset_distribution = Column(Text)  # JSON字符串存储
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
 # 加密密钥管理
 def get_encryption_key():
     """获取或生成加密密钥"""
@@ -75,4 +85,4 @@ def decrypt_text(encrypted_text):
         return ""
     key = get_encryption_key()
     f = Fernet(key)
-    return f.decrypt(encrypted_text.encode()).decode() 
+    return f.decrypt(encrypted_text.encode()).decode()

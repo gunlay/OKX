@@ -10,6 +10,17 @@
 
     <!-- 资产概览卡片 -->
     <div class="asset-overview">
+      <div class="card-header">
+        <h3>定投策略资产概览</h3>
+        <button class="refresh-btn" @click="refreshData" :disabled="refreshing">
+          <span v-if="refreshing">刷新中...</span>
+          <span v-else>刷新数据</span>
+        </button>
+      </div>
+      <div class="strategy-note">
+        <i class="note-icon">ℹ️</i>
+        <span>此处仅统计通过本系统执行的定投交易产生的资产和收益</span>
+      </div>
       <div class="asset-card">
         <div class="asset-item">
           <div class="label">总资产</div>
@@ -23,14 +34,33 @@
           <div class="label">总收益</div>
           <div class="value" :class="{ 'profit': totalProfit >= 0, 'loss': totalProfit < 0 }">
             ${{ formatNumber(totalProfit) }}
+            <span class="profit-rate" :class="{ 'profit': totalProfit >= 0, 'loss': totalProfit < 0 }">
+              ({{ formatProfitRate(totalProfit, totalInvestment) }})
+            </span>
           </div>
+        </div>
+        <div class="asset-item">
+          <div class="label">年化收益率</div>
+          <div class="value" :class="{ 'profit': annualizedReturn >= 0, 'loss': annualizedReturn < 0 }">
+            {{ formatAnnualizedReturn(annualizedReturn) }}
+          </div>
+        </div>
+        <div class="strategy-info" v-if="strategyInfo.startDate">
+          <div>策略开始: {{ formatDate(strategyInfo.startDate) }}</div>
+          <div>执行次数: {{ strategyInfo.executionCount }} 次</div>
+        </div>
+        <div class="last-updated" v-if="lastUpdated">
+          最后更新: {{ formatDateTime(lastUpdated) }}
         </div>
       </div>
     </div>
 
+    <!-- 资产趋势图表 -->
+    <AssetTrend :refresh-trigger="refreshTrigger" />
+    
     <!-- 饼状图 -->
     <div class="chart-section">
-      <h3>资产分布</h3>
+      <h3>定投策略资产分布</h3>
       <div class="pie-chart">
         <div v-if="loading" class="loading-spinner"></div>
         <div v-else-if="filteredAssetDistribution.length === 0" class="no-data">
@@ -82,17 +112,29 @@
 
 <script>
 import { assetApi } from '../api.js';
+import AssetTrend from '../components/AssetTrend.vue';
 
 export default {
   name: 'Home',
+  components: {
+    AssetTrend
+  },
   data() {
     return {
       totalAssets: 0,
       totalInvestment: 0,
       totalProfit: 0,
+      annualizedReturn: 0,
       assetDistribution: [],
       loading: true,
       error: '',
+      lastUpdated: null,
+      refreshing: false,
+      refreshTrigger: 0, // 用于触发资产趋势图表刷新
+      strategyInfo: {
+        startDate: null,
+        executionCount: 0
+      },
       colors: ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#faad14', '#13c2c2', '#f5222d']
     }
   },
@@ -106,12 +148,17 @@ export default {
     }
   },
   methods: {
-    async fetchAssetData() {
+    async fetchAssetData(forceRefresh = false) {
       try {
         this.loading = true;
         this.error = '';
+        if (forceRefresh) {
+          this.refreshing = true;
+        }
         
-        const response = await assetApi.getOverview();
+        // 添加force_refresh参数
+        const url = forceRefresh ? '/api/assets/overview?force_refresh=true' : '/api/assets/overview';
+        const response = await assetApi.getOverview(url);
         const data = response.data;
         
         if (data.error) {
@@ -122,19 +169,74 @@ export default {
         this.totalAssets = data.totalAssets;
         this.totalInvestment = data.totalInvestment;
         this.totalProfit = data.totalProfit;
+        this.annualizedReturn = data.annualizedReturn || 0;
         this.assetDistribution = data.assetDistribution;
+        
+        // 更新策略信息
+        if (data.strategyInfo) {
+          this.strategyInfo = data.strategyInfo;
+        }
+        
+        // 更新最后更新时间
+        if (data.lastUpdated) {
+          this.lastUpdated = new Date(data.lastUpdated);
+        } else {
+          this.lastUpdated = new Date();
+        }
       } catch (error) {
         console.error('获取资产数据失败:', error);
         this.error = '获取资产数据失败: ' + (error.response?.data?.detail || error.message);
       } finally {
         this.loading = false;
+        this.refreshing = false;
       }
+    },
+    
+    // 手动刷新数据
+    refreshData() {
+      this.fetchAssetData(true);
+      // 增加刷新触发器的值，触发资产趋势图表刷新
+      this.refreshTrigger++;
+    },
+    
+    // 格式化日期时间
+    formatDateTime(date) {
+      if (!date) return '';
+      return new Date(date).toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
     },
     
     formatNumber(num) {
       return num.toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
+      });
+    },
+    
+    formatProfitRate(profit, investment) {
+      if (!investment || investment === 0) return '0.00%';
+      const rate = (profit / investment) * 100;
+      return `${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%`;
+    },
+    
+    formatAnnualizedReturn(rate) {
+      if (!rate) return '0.00%';
+      const percentage = rate * 100;
+      return `${percentage >= 0 ? '+' : ''}${percentage.toFixed(2)}%`;
+    },
+    
+    formatDate(date) {
+      if (!date) return '';
+      return new Date(date).toLocaleDateString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
       });
     },
     
@@ -200,11 +302,64 @@ export default {
   margin-bottom: 30px;
 }
 
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.card-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.refresh-btn {
+  padding: 6px 12px;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.3s;
+}
+
+.refresh-btn:hover {
+  background: #40a9ff;
+}
+
+.refresh-btn:disabled {
+  background: #bae7ff;
+  cursor: not-allowed;
+}
+
 .asset-card {
   background: white;
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+.strategy-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #666;
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px dashed #f0f0f0;
+}
+
+.last-updated {
+  font-size: 12px;
+  color: #999;
+  text-align: right;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #f0f0f0;
 }
 
 .asset-item {
@@ -236,6 +391,11 @@ export default {
 
 .loss {
   color: #ff4d4f;
+}
+
+.profit-rate {
+  font-size: 14px;
+  margin-left: 8px;
 }
 
 .chart-section {

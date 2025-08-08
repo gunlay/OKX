@@ -635,11 +635,143 @@ def init_scheduler():
     finally:
         db.close()
 
+# 记录资产历史数据的定时任务
+@scheduler.scheduled_job('cron', hour=0, minute=0, timezone=TIMEZONE)
+def record_asset_history():
+    """每天零点记录一次定投策略的资产数据"""
+    try:
+        logger.info("开始记录定投策略资产历史数据")
+        
+        # 获取资产数据
+        asset_data = get_assets_overview(force_refresh=True)
+        
+        # 如果有错误，记录日志但不保存数据
+        if "error" in asset_data:
+            logger.error(f"记录资产历史数据失败: {asset_data['error']}")
+            return
+        
+        # 记录到数据库
+        db = SessionLocal()
+        try:
+            history = AssetHistory(
+                total_assets=asset_data["totalAssets"],
+                total_investment=asset_data["totalInvestment"],
+                total_profit=asset_data["totalProfit"],
+                asset_distribution=json.dumps(asset_data["assetDistribution"]),
+                recorded_at=datetime.now(TIMEZONE)
+            )
+            db.add(history)
+            db.commit()
+            logger.info("定投策略资产历史数据记录成功")
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"保存资产历史数据异常: {str(e)}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.exception(f"记录资产历史数据任务异常: {str(e)}")
+
+# 获取资产历史数据的API
+def calculate_max_drawdown(asset_history):
+    """计算最大回撤"""
+    if not asset_history or len(asset_history) < 2:
+        return 0
+    
+    # 提取总资产值
+    values = [record["totalAssets"] for record in asset_history]
+    
+    # 计算最大回撤
+    max_drawdown = 0
+    peak = values[0]
+    
+    for value in values:
+        if value > peak:
+            peak = value
+        else:
+            drawdown = (peak - value) / peak if peak > 0 else 0
+            max_drawdown = max(max_drawdown, drawdown)
+    
+    return max_drawdown
+
+@app.get("/api/assets/history")
+def get_asset_history(days: int = 30, include_metrics: bool = False):
+    """获取指定天数的资产历史数据，可选择是否包含风险指标"""
+    db = next(get_db())
+    
+    try:
+        # 计算起始日期
+        end_date = datetime.now(TIMEZONE)
+        start_date = end_date - timedelta(days=days)
+        
+        # 查询历史数据
+        history_records = db.query(AssetHistory).filter(
+            AssetHistory.recorded_at >= start_date,
+            AssetHistory.recorded_at <= end_date
+        ).order_by(AssetHistory.recorded_at.asc()).all()
+        
+        # 格式化结果
+        result = []
+        for record in history_records:
+            result.append({
+                "date": record.recorded_at.isoformat(),
+                "totalAssets": record.total_assets,
+                "totalInvestment": record.total_investment,
+                "totalProfit": record.total_profit,
+                "assetDistribution": json.loads(record.asset_distribution) if record.asset_distribution else []
+            })
+        
+        # 如果需要包含风险指标
+        if include_metrics and result:
+            # 计算最大回撤
+            max_drawdown = calculate_max_drawdown(result)
+            
+            # 计算波动率（标准差）
+            if len(result) > 1:
+                values = [record["totalAssets"] for record in result]
+                volatility = 0
+                if len(values) > 1:
+                    import numpy as np
+                    try:
+                        # 计算日收益率
+                        returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
+                                for i in range(1, len(values))]
+                        # 计算标准差
+                        volatility = float(np.std(returns))
+                        # 年化波动率（假设252个交易日）
+                        volatility = volatility * (252 ** 0.5)
+                    except Exception as e:
+                        logger.warning(f"计算波动率异常: {str(e)}")
+            else:
+                volatility = 0
+            
+            # 添加风险指标到返回结果
+            return {
+                "history": result,
+                "metrics": {
+                    "maxDrawdown": max_drawdown,
+                    "volatility": volatility
+                }
+            }
+        
+        return result
+    except Exception as e:
+        logger.exception(f"获取资产历史数据异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取资产历史数据失败: {str(e)}")
+
 # 启动时初始化调度器
 @app.on_event("startup")
 def startup_event():
     logger.info("服务启动，初始化调度器")
     init_scheduler()
+    
+    # 启动时记录一次资产数据
+    try:
+        logger.info("启动时记录资产数据")
+        # 使用线程执行，避免阻塞启动过程
+        import threading
+        threading.Thread(target=record_asset_history).start()
+    except Exception as e:
+        logger.exception(f"启动时记录资产数据异常: {str(e)}")
 
 # 添加手动执行任务接口
 @app.post("/api/dca-plan/{plan_id}/execute")
@@ -1040,8 +1172,272 @@ def test_api_connection(config: ApiConfig = Body(...)):
         }
 
 # 获取资产概览
+# 资产数据缓存
+assets_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 300  # 缓存有效期，单位秒
+}
+
+def calculate_dca_assets_and_investment(db, client):
+    """计算定投策略的资产价值、投入和收益"""
+    # 获取所有成功的交易记录
+    transactions = db.query(Transaction).filter(Transaction.status == "success").all()
+    
+    # 按币种统计买入和卖出数量
+    coin_balances = {}  # 格式: {symbol: {'bought': 数量, 'sold': 数量, 'investment': 投入金额}}
+    total_investment = 0
+    
+    for tx in transactions:
+        symbol = tx.symbol.split('-')[0]  # 例如从"BTC-USDT"提取"BTC"
+        
+        if symbol not in coin_balances:
+            coin_balances[symbol] = {'bought': 0, 'sold': 0, 'investment': 0}
+        
+        try:
+            # 解析交易响应获取实际成交数量和金额
+            if tx.response:
+                response_data = json.loads(tx.response)
+                
+                # 检查是否有成交详情
+                if 'fill_details' in response_data and response_data['fill_details']:
+                    fill_data = response_data['fill_details']
+                    
+                    # 获取成交数量
+                    if 'fillSz' in fill_data and fill_data['fillSz']:
+                        try:
+                            fill_size = float(fill_data['fillSz'])
+                            
+                            # 买入交易增加持仓数量和投入金额
+                            if tx.direction == "buy":
+                                coin_balances[symbol]['bought'] += fill_size
+                                
+                                # 获取成交金额
+                                if 'fillAmt' in fill_data and fill_data['fillAmt']:
+                                    try:
+                                        fill_amount = float(fill_data['fillAmt'])
+                                        coin_balances[symbol]['investment'] += fill_amount
+                                        total_investment += fill_amount
+                                    except (ValueError, TypeError):
+                                        # 如果无法获取成交金额，使用订单金额
+                                        coin_balances[symbol]['investment'] += tx.amount
+                                        total_investment += tx.amount
+                                else:
+                                    coin_balances[symbol]['investment'] += tx.amount
+                                    total_investment += tx.amount
+                            
+                            # 卖出交易减少持仓数量和投入金额
+                            elif tx.direction == "sell":
+                                coin_balances[symbol]['sold'] += fill_size
+                                
+                                # 获取成交金额
+                                if 'fillAmt' in fill_data and fill_data['fillAmt']:
+                                    try:
+                                        fill_amount = float(fill_data['fillAmt'])
+                                        coin_balances[symbol]['investment'] -= fill_amount
+                                        total_investment -= fill_amount
+                                    except (ValueError, TypeError):
+                                        # 如果无法获取成交金额，使用订单金额
+                                        coin_balances[symbol]['investment'] -= tx.amount
+                                        total_investment -= tx.amount
+                                else:
+                                    coin_balances[symbol]['investment'] -= tx.amount
+                                    total_investment -= tx.amount
+                                
+                        except (ValueError, TypeError):
+                            # 如果无法解析成交数量，使用默认逻辑
+                            if tx.direction == "buy":
+                                coin_balances[symbol]['investment'] += tx.amount
+                                total_investment += tx.amount
+                            elif tx.direction == "sell":
+                                coin_balances[symbol]['investment'] -= tx.amount
+                                total_investment -= tx.amount
+                    else:
+                        # 如果无法获取成交数量，使用默认逻辑
+                        if tx.direction == "buy":
+                            coin_balances[symbol]['investment'] += tx.amount
+                            total_investment += tx.amount
+                        elif tx.direction == "sell":
+                            coin_balances[symbol]['investment'] -= tx.amount
+                            total_investment -= tx.amount
+                else:
+                    # 如果没有成交详情，使用默认逻辑
+                    if tx.direction == "buy":
+                        coin_balances[symbol]['investment'] += tx.amount
+                        total_investment += tx.amount
+                    elif tx.direction == "sell":
+                        coin_balances[symbol]['investment'] -= tx.amount
+                        total_investment -= tx.amount
+            else:
+                # 如果没有响应数据，使用默认逻辑
+                if tx.direction == "buy":
+                    coin_balances[symbol]['investment'] += tx.amount
+                    total_investment += tx.amount
+                elif tx.direction == "sell":
+                    coin_balances[symbol]['investment'] -= tx.amount
+                    total_investment -= tx.amount
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            # 如果解析失败，使用默认逻辑
+            if tx.direction == "buy":
+                coin_balances[symbol]['investment'] += tx.amount
+                total_investment += tx.amount
+            elif tx.direction == "sell":
+                coin_balances[symbol]['investment'] -= tx.amount
+                total_investment -= tx.amount
+    
+    # 计算每种币的净持仓数量
+    net_balances = {}
+    for symbol, data in coin_balances.items():
+        net_balance = data['bought'] - data['sold']
+        if net_balance > 0:
+            net_balances[symbol] = net_balance
+    
+    # 计算当前价值
+    assets = []
+    total_assets = 0
+    
+    for symbol, balance in net_balances.items():
+        if balance > 0:
+            # 获取当前价格
+            ticker_result = client.get_ticker(f"{symbol}-USDT")
+            if ticker_result.get('code') == '0' and ticker_result.get('data'):
+                price = float(ticker_result['data'][0].get('last', 0))
+                value_in_usdt = balance * price
+                
+                assets.append({
+                    "currency": symbol,
+                    "amount": balance,
+                    "valueInUsdt": value_in_usdt
+                })
+                
+                total_assets += value_in_usdt
+    
+    return total_assets, assets, total_investment, None
+
+def calculate_total_investment(db):
+    """计算用户的总投入金额"""
+    # 获取所有成功的交易记录
+    transactions = db.query(Transaction).filter(Transaction.status == "success").all()
+    
+    total_investment = 0
+    
+    for tx in transactions:
+        try:
+            # 解析交易响应获取实际成交金额
+            if tx.response:
+                response_data = json.loads(tx.response)
+                
+                # 检查是否有成交详情
+                if 'fill_details' in response_data and response_data['fill_details']:
+                    fill_data = response_data['fill_details']
+                    
+                    # 对于买入交易，使用实际成交金额
+                    if tx.direction == "buy":
+                        if 'fillAmt' in fill_data and fill_data['fillAmt']:
+                            try:
+                                fill_amount = float(fill_data['fillAmt'])
+                                total_investment += fill_amount
+                                continue
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    # 对于卖出交易，使用实际成交金额，从总投入中减去
+                    elif tx.direction == "sell":
+                        if 'fillAmt' in fill_data and fill_data['fillAmt']:
+                            try:
+                                fill_amount = float(fill_data['fillAmt'])
+                                total_investment -= fill_amount
+                                continue
+                            except (ValueError, TypeError):
+                                pass
+            
+            # 如果无法从成交详情获取，则使用交易记录中的金额
+            if tx.direction == "buy":
+                total_investment += tx.amount
+            elif tx.direction == "sell":
+                total_investment -= tx.amount
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            # 如果解析失败，使用交易记录中的金额
+            if tx.direction == "buy":
+                total_investment += tx.amount
+            elif tx.direction == "sell":
+                total_investment -= tx.amount
+    
+    return total_investment
+
+def calculate_asset_distribution(assets, total_assets):
+    """计算资产分布百分比"""
+    asset_distribution = []
+    
+    for asset in assets:
+        if total_assets > 0:
+            percentage = (asset["valueInUsdt"] / total_assets) * 100
+        else:
+            percentage = 0
+        
+        asset_distribution.append({
+            "currency": asset["currency"],
+            "amount": asset["amount"],
+            "valueInUsdt": asset["valueInUsdt"],
+            "percentage": percentage
+        })
+    
+    # 按价值排序
+    asset_distribution.sort(key=lambda x: x["valueInUsdt"], reverse=True)
+    
+    return asset_distribution
+
+def get_strategy_info(db):
+    """获取定投策略的基本信息，如开始时间和执行次数"""
+    try:
+        # 获取第一笔成功交易的时间作为策略开始时间
+        first_transaction = db.query(Transaction).filter(
+            Transaction.status == "success"
+        ).order_by(Transaction.executed_at.asc()).first()
+        
+        # 获取成功交易的总数作为执行次数
+        execution_count = db.query(Transaction).filter(
+            Transaction.status == "success"
+        ).count()
+        
+        # 计算策略运行天数
+        days_running = 0
+        if first_transaction:
+            start_date = first_transaction.executed_at.replace(tzinfo=None)
+            current_date = datetime.now()
+            days_running = (current_date - start_date).days
+            if days_running < 1:
+                days_running = 1  # 至少为1天，避免除零错误
+        
+        return {
+            "startDate": first_transaction.executed_at.isoformat() if first_transaction else None,
+            "executionCount": execution_count,
+            "daysRunning": days_running
+        }
+    except Exception as e:
+        logger.exception(f"获取策略信息异常: {str(e)}")
+        return {
+            "startDate": None,
+            "executionCount": 0
+        }
+
+def calculate_total_investment(db):
+    """此函数已被替换为calculate_dca_assets_and_investment，保留此函数签名以避免引用错误"""
+    logger.warning("calculate_total_investment函数已被弃用，请使用calculate_dca_assets_and_investment")
+    return 0
+
 @app.get("/api/assets/overview")
-def get_assets_overview():
+def get_assets_overview(force_refresh: bool = False):
+    """获取定投策略的资产概览数据，包括总资产、总投入、总收益和资产分布"""
+    global assets_cache
+    
+    # 检查缓存是否有效
+    current_time = time.time()
+    if not force_refresh and assets_cache["data"] and (current_time - assets_cache["timestamp"]) < assets_cache["ttl"]:
+        return assets_cache["data"]
+    
     db = next(get_db())
     config = db.query(UserConfig).first()
     
@@ -1050,7 +1446,8 @@ def get_assets_overview():
             "totalAssets": 0,
             "totalInvestment": 0,
             "totalProfit": 0,
-            "assetDistribution": []
+            "assetDistribution": [],
+            "lastUpdated": datetime.now(TIMEZONE).isoformat()
         }
     
     try:
@@ -1065,78 +1462,69 @@ def get_assets_overview():
                 "totalInvestment": 0,
                 "totalProfit": 0,
                 "assetDistribution": [],
-                "error": "API配置不完整"
+                "error": "API配置不完整",
+                "lastUpdated": datetime.now(TIMEZONE).isoformat()
             }
         
         # 创建OKX客户端
         client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
         
-        # 获取账户余额
-        balance_result = client.get_trading_balance()
-        
-        if balance_result.get('code') != '0':
+        # 1. 计算定投策略的资产价值、投入和收益
+        total_assets, assets, total_investment, error = calculate_dca_assets_and_investment(db, client)
+        if error:
             return {
                 "totalAssets": 0,
                 "totalInvestment": 0,
                 "totalProfit": 0,
                 "assetDistribution": [],
-                "error": f"获取余额失败: {balance_result.get('msg', '未知错误')}"
+                "error": error,
+                "lastUpdated": datetime.now(TIMEZONE).isoformat()
             }
         
-        # 计算总投资金额
-        total_investment = db.query(Transaction).filter(Transaction.status == "success").count() * 100  # 假设每次投资100 USDT
-        
-        # 解析余额数据
-        assets = []
-        total_assets = 0
-        
-        for item in balance_result.get('data', []):
-            for balance in item.get('details', []):
-                currency = balance.get('ccy')
-                available = float(balance.get('availBal', 0))
-                
-                if available > 0:
-                    # 如果不是USDT，需要获取当前价格
-                    if currency != 'USDT':
-                        ticker_result = client.get_ticker(f"{currency}-USDT")
-                        if ticker_result.get('code') == '0' and ticker_result.get('data'):
-                            price = float(ticker_result['data'][0].get('last', 0))
-                            value_in_usdt = available * price
-                        else:
-                            value_in_usdt = 0
-                    else:
-                        value_in_usdt = available
-                    
-                    assets.append({
-                        "currency": currency,
-                        "amount": available,
-                        "valueInUsdt": value_in_usdt
-                    })
-                    
-                    total_assets += value_in_usdt
-        
-        # 计算总收益
+        # 2. 计算总收益和年化收益率
         total_profit = total_assets - total_investment
         
-        # 计算资产分布
-        asset_distribution = []
-        for asset in assets:
-            if total_assets > 0:
-                percentage = (asset["valueInUsdt"] / total_assets) * 100
-            else:
-                percentage = 0
-            
-            asset_distribution.append({
+        # 计算年化收益率
+        annualized_return = 0
+        strategy_info = get_strategy_info(db)
+        days_running = strategy_info.get('daysRunning', 0)
+        
+        if days_running > 0 and total_investment > 0:
+            # 计算总收益率
+            total_return_rate = total_profit / total_investment
+            # 转换为年化收益率: (1 + r)^(365/days) - 1
+            annualized_return = ((1 + total_return_rate) ** (365 / days_running)) - 1
+        
+        # 3. 计算资产分布
+        full_asset_distribution = calculate_asset_distribution(assets, total_assets)
+        
+        # 简化资产分布数据，只返回前端需要的字段
+        simplified_distribution = []
+        for asset in full_asset_distribution:
+            simplified_distribution.append({
                 "currency": asset["currency"],
-                "percentage": percentage
+                "percentage": asset["percentage"]
             })
         
-        return {
+        # 获取策略信息
+        strategy_info = get_strategy_info(db)
+        
+        # 构建结果
+        result = {
             "totalAssets": total_assets,
             "totalInvestment": total_investment,
             "totalProfit": total_profit,
-            "assetDistribution": asset_distribution
+            "annualizedReturn": annualized_return,
+            "assetDistribution": simplified_distribution,
+            "strategyInfo": strategy_info,
+            "lastUpdated": datetime.now(TIMEZONE).isoformat()
         }
+        
+        # 更新缓存
+        assets_cache["data"] = result
+        assets_cache["timestamp"] = current_time
+        
+        return result
     
     except Exception as e:
         logger.exception(f"获取资产概览异常: {str(e)}")
@@ -1145,5 +1533,6 @@ def get_assets_overview():
             "totalInvestment": 0,
             "totalProfit": 0,
             "assetDistribution": [],
-            "error": f"服务器异常: {str(e)}"
-        } 
+            "error": f"服务器异常: {str(e)}",
+            "lastUpdated": datetime.now(TIMEZONE).isoformat()
+        }
