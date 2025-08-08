@@ -50,9 +50,9 @@ export const configApi = {
 // 资产相关 API
 export const assetApi = {
   // 获取资产概览
-  getOverview: (url = '/assets/overview') => api.get(url),
+  getOverview: (url = '/api/assets/overview') => api.get(url),
   // 获取资产历史数据
-  getHistory: (days = 30, includeMetrics = false) => api.get(`/assets/history`, { params: { days, include_metrics: includeMetrics } }),
+  getHistory: (days = 30, includeMetrics = false) => api.get(`/api/assets/history`, { params: { days, include_metrics: includeMetrics } }),
 };
 
 // 交易记录相关 API
