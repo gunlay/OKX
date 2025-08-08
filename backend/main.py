@@ -248,6 +248,35 @@ def execute_dca_task(plan_id: int):
                 # 确保卖出数量不超过可用余额
                 sell_size = min(sell_size, available_amount)
                 
+                # 处理精度问题：OKX对不同币种有不同的精度要求
+                # 通常BTC是8位小数，ETH是6位小数，其他币种可能有不同要求
+                # 这里我们根据币种类型设置合适的精度
+                if base_currency == 'BTC':
+                    sell_size = round(sell_size, 8)  # BTC通常使用8位小数
+                elif base_currency == 'ETH':
+                    sell_size = round(sell_size, 6)  # ETH通常使用6位小数
+                else:
+                    sell_size = round(sell_size, 4)  # 其他币种默认使用4位小数
+                
+                # 确保数量大于0
+                if sell_size <= 0:
+                    logger.error(f"任务 {plan_id} 卖出失败: 计算后的卖出数量为0")
+                    # 记录失败交易
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction,
+                        status="failed",
+                        response=json.dumps({"error": "计算后的卖出数量为0"}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                logger.info(f"任务 {plan_id} 卖出 {base_currency}: 金额 {plan.amount} USDT, 数量 {sell_size} {base_currency}, 当前价格 {current_price} USDT")
+                
                 # 执行卖出订单
                 order_result = client.place_order(
                     symbol=plan.symbol,
