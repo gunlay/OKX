@@ -156,12 +156,113 @@ def execute_dca_task(plan_id: int):
             
             # 执行交易
             side = "sell" if plan.direction == "sell" else "buy"
-            order_result = client.place_order(
-                symbol=plan.symbol,
-                side=side,
-                order_type="market",
-                size=str(plan.amount)
-            )
+            
+            # 对于卖出操作，需要先查询账户余额，获取可用的币种数量
+            if side == "sell":
+                # 获取币种信息，例如BTC-USDT中的BTC
+                base_currency = plan.symbol.split('-')[0]
+                balance_result = client.get_trading_balance()
+                
+                if balance_result.get('code') != '0':
+                    logger.error(f"任务 {plan_id} 获取账户余额失败: {balance_result.get('msg', '未知错误')}")
+                    # 记录失败交易
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction,
+                        status="failed",
+                        response=json.dumps({"error": f"获取账户余额失败: {balance_result.get('msg', '未知错误')}"}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                # 查找对应币种的可用余额
+                available_amount = 0
+                for item in balance_result.get('data', []):
+                    for balance in item.get('details', []):
+                        if balance.get('ccy') == base_currency:
+                            available_amount = float(balance.get('availBal', 0))
+                            break
+                
+                if available_amount <= 0:
+                    logger.error(f"任务 {plan_id} 卖出失败: {base_currency}余额不足")
+                    # 记录失败交易
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction,
+                        status="failed",
+                        response=json.dumps({"error": f"{base_currency}余额不足"}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                # 获取当前市场价格，计算可以卖出的数量
+                ticker_result = client.get_ticker(plan.symbol)
+                if ticker_result.get('code') != '0':
+                    logger.error(f"任务 {plan_id} 获取市场价格失败: {ticker_result.get('msg', '未知错误')}")
+                    # 记录失败交易
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction,
+                        status="failed",
+                        response=json.dumps({"error": f"获取市场价格失败: {ticker_result.get('msg', '未知错误')}"}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                current_price = float(ticker_result['data'][0].get('last', 0))
+                if current_price <= 0:
+                    logger.error(f"任务 {plan_id} 获取市场价格异常: {current_price}")
+                    # 记录失败交易
+                    transaction = Transaction(
+                        plan_id=plan.id,
+                        symbol=plan.symbol,
+                        amount=plan.amount,
+                        direction=plan.direction,
+                        status="failed",
+                        response=json.dumps({"error": f"获取市场价格异常: {current_price}"}),
+                        executed_at=datetime.now(TIMEZONE)
+                    )
+                    db.add(transaction)
+                    db.commit()
+                    return
+                
+                # 计算卖出数量：如果plan.amount小于等于可用余额*当前价格，则按照plan.amount/当前价格计算卖出数量
+                # 否则卖出全部可用余额
+                if plan.amount <= available_amount * current_price:
+                    sell_size = plan.amount / current_price
+                else:
+                    sell_size = available_amount
+                
+                # 确保卖出数量不超过可用余额
+                sell_size = min(sell_size, available_amount)
+                
+                # 执行卖出订单
+                order_result = client.place_order(
+                    symbol=plan.symbol,
+                    side=side,
+                    order_type="market",
+                    size=str(sell_size)
+                )
+            else:
+                # 买入逻辑保持不变
+                order_result = client.place_order(
+                    symbol=plan.symbol,
+                    side=side,
+                    order_type="market",
+                    size=str(plan.amount)
+                )
             
             # 记录执行结果
             # 记录执行结果
