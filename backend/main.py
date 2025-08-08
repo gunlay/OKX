@@ -311,75 +311,127 @@ def execute_dca_task(plan_id: int):
                     # 等待5秒让成交数据生成（增加等待时间）
                     time.sleep(5)
                     
-                    for attempt in range(5):  # 最多重试5次
+                    # 对于市价单，我们需要特别处理
+                    # 市价买单：sz表示买入金额，需要从成交明细获取实际成交数量
+                    # 市价卖单：sz表示卖出数量，需要从成交明细获取实际成交金额
+                    
+                    # 先尝试获取成交明细，这是最准确的
+                    fills_result = client.get_order_fills(order_id)
+                    logger.info(f"任务 {plan_id} 成交明细响应: {fills_result}")
+                    
+                    if fills_result.get('code') == '0' and fills_result.get('data') and len(fills_result['data']) > 0:
+                        # 成交明细可能有多条记录，我们需要汇总
+                        total_fill_px = 0
+                        total_fill_sz = 0
+                        total_fill_amt = 0
+                        fill_count = 0
+                        
+                        for fill_info in fills_result['data']:
+                            try:
+                                fill_px = float(fill_info.get('fillPx', 0))
+                                fill_sz = float(fill_info.get('fillSz', 0))
+                                
+                                if fill_px > 0 and fill_sz > 0:
+                                    total_fill_px += fill_px * fill_sz  # 加权价格
+                                    total_fill_sz += fill_sz
+                                    total_fill_amt += fill_px * fill_sz
+                                    fill_count += 1
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"解析成交明细数据异常: {str(e)}")
+                        
+                        # 计算加权平均价格
+                        if total_fill_sz > 0:
+                            avg_fill_px = total_fill_px / total_fill_sz
+                            
+                            fill_details = {
+                                'fillPx': str(avg_fill_px),  # 成交均价
+                                'fillSz': str(total_fill_sz),  # 累计成交数量
+                                'fillAmt': str(total_fill_amt),  # 成交金额
+                                'ordId': order_id
+                            }
+                            logger.info(f"任务 {plan_id} 从成交明细汇总获取成交信息: {fill_details}")
+                    
+                    # 如果成交明细没有数据，尝试获取订单详情
+                    if not fill_details:
+                        for attempt in range(3):  # 最多重试3次
+                            try:
+                                order_detail = client.get_order_detail(order_id)
+                                logger.info(f"任务 {plan_id} 订单详情响应 (尝试{attempt+1}): {order_detail}")
+                                
+                                if order_detail.get('code') == '0' and order_detail.get('data'):
+                                    order_info = order_detail['data'][0]
+                                    
+                                    # 检查订单状态是否已完成
+                                    if order_info.get('state') in ['filled', 'partially_filled']:
+                                        # 从订单详情中获取成交价格和数量
+                                        avg_px = order_info.get('avgPx')
+                                        acc_fill_sz = order_info.get('accFillSz')
+                                        fill_amt = None
+                                        
+                                        # 计算成交金额
+                                        if avg_px and acc_fill_sz:
+                                            try:
+                                                fill_amt = str(float(avg_px) * float(acc_fill_sz))
+                                            except (ValueError, TypeError):
+                                                pass
+                                        
+                                        # 确保值不为空
+                                        if avg_px and acc_fill_sz:
+                                            fill_details = {
+                                                'fillPx': avg_px,  # 成交均价
+                                                'fillSz': acc_fill_sz,  # 累计成交数量
+                                                'fillAmt': fill_amt,  # 成交金额
+                                                'ordId': order_id
+                                            }
+                                            logger.info(f"任务 {plan_id} 从订单详情获取成交信息: {fill_details}")
+                                            break
+                                    else:
+                                        logger.info(f"任务 {plan_id} 订单状态: {order_info.get('state')} (尝试{attempt+1})")
+                                
+                                if attempt < 2:  # 不是最后一次尝试
+                                    time.sleep(3)  # 等待3秒再重试
+                                    
+                            except Exception as e:
+                                logger.warning(f"任务 {plan_id} 获取订单详情异常 (尝试{attempt+1}): {str(e)}")
+                                if attempt < 2:  # 不是最后一次尝试
+                                    time.sleep(3)  # 等待3秒再重试
+                    
+                    # 如果仍然没有获取到成交信息，使用原始订单信息和当前市场价格估算
+                    if not fill_details:
+                        logger.warning(f"任务 {plan_id} 无法从API获取成交详情，使用估算值")
+                        
+                        # 获取当前市场价格
                         try:
-                            # 先尝试获取订单详情
-                            order_detail = client.get_order_detail(order_id)
-                            logger.info(f"任务 {plan_id} 订单详情响应 (尝试{attempt+1}): {order_detail}")
-                            
-                            if order_detail.get('code') == '0' and order_detail.get('data'):
-                                order_info = order_detail['data'][0]
-                                # 检查订单状态是否已完成
-                                if order_info.get('state') in ['filled', 'partially_filled']:
-                                    # 直接从订单详情中获取成交价格和数量
-                                    avg_px = order_info.get('avgPx')
-                                    acc_fill_sz = order_info.get('accFillSz')
-                                    
-                                    # 确保值不为空
-                                    if avg_px and acc_fill_sz:
-                                        fill_details = {
-                                            'fillPx': avg_px,  # 成交均价
-                                            'fillSz': acc_fill_sz,  # 累计成交数量
-                                            'ordId': order_id
-                                        }
-                                        logger.info(f"任务 {plan_id} 从订单详情获取成交信息 (尝试{attempt+1}): {fill_details}")
-                                        break
-                                else:
-                                    logger.info(f"任务 {plan_id} 订单状态: {order_info.get('state')} (尝试{attempt+1})")
-                            
-                            # 如果订单详情没有成交信息，尝试成交明细API
-                            if not fill_details:
-                                fills_result = client.get_order_fills(order_id)
-                                logger.info(f"任务 {plan_id} 成交明细响应 (尝试{attempt+1}): {fills_result}")
+                            ticker_result = client.get_ticker(plan.symbol)
+                            if ticker_result.get('code') == '0' and ticker_result.get('data'):
+                                current_price = float(ticker_result['data'][0].get('last', 0))
                                 
-                                if fills_result.get('code') == '0' and fills_result.get('data'):
-                                    fill_info = fills_result['data'][0]
-                                    fill_px = fill_info.get('fillPx')
-                                    fill_sz = fill_info.get('fillSz')
-                                    
-                                    # 确保值不为空
-                                    if fill_px and fill_sz:
-                                        fill_details = {
-                                            'fillPx': fill_px,  # 成交价格
-                                            'fillSz': fill_sz,  # 成交数量
-                                            'ordId': order_id
-                                        }
-                                        logger.info(f"任务 {plan_id} 从成交明细获取成交信息 (尝试{attempt+1}): {fill_details}")
-                                        break
-                            
-                            # 如果仍然没有获取到成交信息，尝试从原始订单结果中提取
-                            if not fill_details and order_result.get('data'):
-                                order_data = order_result['data'][0]
-                                # 有些情况下，原始订单结果中可能已经包含了成交价格和数量
-                                px = order_data.get('px') or order_data.get('avgPx')
-                                sz = order_data.get('sz') or order_data.get('accFillSz')
-                                
-                                if px and sz:
+                                # 根据订单类型估算成交信息
+                                if side == "buy":
+                                    # 买入：使用订单金额和当前价格估算
+                                    est_size = float(plan.amount) / current_price
                                     fill_details = {
-                                        'fillPx': px,
-                                        'fillSz': sz,
-                                        'ordId': order_id
+                                        'fillPx': str(current_price),
+                                        'fillSz': str(est_size),
+                                        'fillAmt': str(plan.amount),
+                                        'ordId': order_id,
+                                        'estimated': True  # 标记为估算值
                                     }
-                                    logger.info(f"任务 {plan_id} 从原始订单结果获取成交信息: {fill_details}")
-                                    break
-                            
-                            if attempt < 4:  # 不是最后一次尝试
-                                time.sleep(3)  # 等待3秒再重试
+                                else:
+                                    # 卖出：使用卖出数量和当前价格估算
+                                    if 'sell_size' in locals():
+                                        est_amount = float(sell_size) * current_price
+                                        fill_details = {
+                                            'fillPx': str(current_price),
+                                            'fillSz': str(sell_size),
+                                            'fillAmt': str(est_amount),
+                                            'ordId': order_id,
+                                            'estimated': True  # 标记为估算值
+                                        }
                                 
+                                logger.info(f"任务 {plan_id} 使用估算值作为成交信息: {fill_details}")
                         except Exception as e:
-                            logger.warning(f"任务 {plan_id} 获取成交信息异常 (尝试{attempt+1}): {str(e)}")
-                            if attempt < 4:  # 不是最后一次尝试
-                                time.sleep(3)  # 等待3秒再重试
+                            logger.warning(f"任务 {plan_id} 估算成交信息异常: {str(e)}")
                 
                 # 构建完整的响应数据，包含成交详情
                 complete_response = {
@@ -794,46 +846,73 @@ def get_transactions(
                     fill_data = response_data['fill_details']
                     # 成交价格和数量
                     if 'fillPx' in fill_data and fill_data['fillPx']:
-                        trade_price = float(fill_data['fillPx'])
+                        try:
+                            trade_price = float(fill_data['fillPx'])
+                        except (ValueError, TypeError):
+                            pass
+                            
                     if 'fillSz' in fill_data and fill_data['fillSz']:
-                        trade_quantity = float(fill_data['fillSz'])
+                        try:
+                            trade_quantity = float(fill_data['fillSz'])
+                        except (ValueError, TypeError):
+                            pass
                 
-                # 如果没有fill_details，尝试从order_result中获取
-                elif 'order_result' in response_data and response_data['order_result'].get('data'):
-                    order_data = response_data['order_result']['data'][0]
-                    # 尝试多种可能的字段名
-                    for price_field in ['avgPx', 'px', 'fillPx']:
-                        if price_field in order_data and order_data[price_field]:
-                            trade_price = float(order_data[price_field])
-                            break
-                    
-                    for size_field in ['accFillSz', 'sz', 'fillSz']:
-                        if size_field in order_data and order_data[size_field]:
-                            trade_quantity = float(order_data[size_field])
-                            break
-                
-                # 如果仍然没有获取到价格和数量，尝试从响应中的其他位置获取
+                # 如果没有fill_details或者解析失败，尝试从order_result中获取
                 if (trade_price is None or trade_quantity is None) and 'order_result' in response_data:
-                    # 检查是否有其他可能包含价格和数量的字段
-                    order_result = response_data['order_result']
-                    if 'data' in order_result and len(order_result['data']) > 0:
-                        for item in order_result['data']:
-                            # 遍历所有可能的字段
-                            for key, value in item.items():
-                                if 'px' in key.lower() and trade_price is None and value:
-                                    try:
-                                        trade_price = float(value)
-                                    except (ValueError, TypeError):
-                                        pass
-                                
-                                if ('sz' in key.lower() or 'size' in key.lower()) and trade_quantity is None and value:
-                                    try:
-                                        trade_quantity = float(value)
-                                    except (ValueError, TypeError):
-                                        pass
+                    if response_data['order_result'].get('data'):
+                        order_data = response_data['order_result']['data'][0]
+                        
+                        # 尝试多种可能的字段名获取价格
+                        for price_field in ['avgPx', 'px', 'fillPx']:
+                            if price_field in order_data and order_data[price_field]:
+                                try:
+                                    trade_price = float(order_data[price_field])
+                                    break
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        # 尝试多种可能的字段名获取数量
+                        for size_field in ['accFillSz', 'sz', 'fillSz']:
+                            if size_field in order_data and order_data[size_field]:
+                                try:
+                                    trade_quantity = float(order_data[size_field])
+                                    break
+                                except (ValueError, TypeError):
+                                    pass
+                
+                # 如果是市价买单，可能需要特殊处理
+                # 市价买单中，sz表示买入金额，而不是买入数量
+                if trade_price and trade_price > 0 and transaction.direction == "buy" and trade_quantity is None:
+                    # 如果有价格但没有数量，尝试用金额除以价格计算数量
+                    if 'order_result' in response_data and response_data['order_result'].get('data'):
+                        order_data = response_data['order_result']['data'][0]
+                        if 'sz' in order_data and order_data['sz']:
+                            try:
+                                amount = float(order_data['sz'])
+                                trade_quantity = amount / trade_price
+                            except (ValueError, TypeError, ZeroDivisionError):
+                                pass
+                
+                # 如果是市价卖单，可能需要特殊处理
+                # 市价卖单中，sz表示卖出数量
+                if trade_quantity and trade_quantity > 0 and transaction.direction == "sell" and trade_price is None:
+                    # 如果有数量但没有价格，尝试用金额除以数量计算价格
+                    if 'order_result' in response_data and response_data['order_result'].get('data'):
+                        order_data = response_data['order_result']['data'][0]
+                        if 'sz' in order_data and order_data['sz']:
+                            try:
+                                amount = float(transaction.amount)  # 使用交易记录中的金额
+                                trade_price = amount / trade_quantity
+                            except (ValueError, TypeError, ZeroDivisionError):
+                                pass
+                
+                # 如果仍然没有获取到价格和数量，尝试使用交易记录中的金额和当前市场价格估算
+                if trade_price is None or trade_quantity is None:
+                    # 这里我们可以添加获取当前市场价格的逻辑，但为了简单起见，暂时不实现
+                    pass
                         
             except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"解析交易响应失败: {str(e)}")
+                logger.warning(f"解析交易响应失败: {str(e)}, 响应数据: {transaction.response}")
                 # 如果解析失败，保持为None
                 pass
             
