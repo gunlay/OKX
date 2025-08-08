@@ -15,7 +15,7 @@
     </div>
     
     <!-- 风险指标 -->
-    <div v-if="hasData && (riskMetrics.maxDrawdown > 0 || riskMetrics.volatility > 0)" class="risk-metrics">
+    <div v-if="hasData && (riskMetrics.maxDrawdown > 0 || riskMetrics.volatility > 0 || riskMetrics.sharpeRatio)" class="risk-metrics">
       <div class="metric-item">
         <span class="metric-label">最大回撤:</span>
         <span class="metric-value">{{ formatPercentage(riskMetrics.maxDrawdown) }}</span>
@@ -25,6 +25,13 @@
         <span class="metric-label">年化波动率:</span>
         <span class="metric-value">{{ formatPercentage(riskMetrics.volatility) }}</span>
         <span class="metric-tooltip" title="波动率是衡量资产价格变化幅度的指标，数值越大表示价格波动越剧烈">ℹ️</span>
+      </div>
+      <div class="metric-item" v-if="riskMetrics.sharpeRatio !== undefined">
+        <span class="metric-label">夏普比率:</span>
+        <span class="metric-value" :class="{ 'positive': riskMetrics.sharpeRatio > 0, 'negative': riskMetrics.sharpeRatio < 0 }">
+          {{ riskMetrics.sharpeRatio.toFixed(2) }}
+        </span>
+        <span class="metric-tooltip" title="夏普比率表示每单位风险所获得的超额收益，数值越高表示风险调整后的收益越好">ℹ️</span>
       </div>
     </div>
     <div class="chart-container">
@@ -88,7 +95,8 @@ export default {
     // 风险指标数据
     const riskMetrics = ref({
       maxDrawdown: 0,
-      volatility: 0
+      volatility: 0,
+      sharpeRatio: 0
     });
     
     // 获取历史数据
@@ -426,5 +434,13 @@ export default {
 .metric-tooltip {
   cursor: help;
   color: #1890ff;
+}
+
+.positive {
+  color: #52c41a;
+}
+
+.negative {
+  color: #ff4d4f;
 }
 </style>

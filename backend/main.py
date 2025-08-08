@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import pytz
 
 # 导入自定义模块
-from models import Base, UserConfig, DCAPlan, Transaction, encrypt_text, decrypt_text
+from models import Base, UserConfig, DCAPlan, Transaction, AssetHistory, encrypt_text, decrypt_text
 from okx_api import OKXClient, get_popular_coins_public
 
 # 配置日志
@@ -694,6 +694,52 @@ def calculate_max_drawdown(asset_history):
     return max_drawdown
 
 @app.get("/api/assets/history")
+def calculate_sharpe_ratio(result, risk_free_rate=0.02):
+    """计算夏普比率
+    
+    参数:
+        result: 资产历史数据列表
+        risk_free_rate: 无风险利率，默认为2%
+    
+    返回:
+        夏普比率，如果无法计算则返回0
+    """
+    if len(result) <= 1:
+        return 0
+    
+    try:
+        import numpy as np
+        
+        # 提取总资产值
+        values = [record["totalAssets"] for record in result]
+        
+        # 计算日收益率
+        returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
+                for i in range(1, len(values))]
+        
+        # 计算平均日收益率
+        avg_return = np.mean(returns)
+        
+        # 计算日收益率标准差
+        std_return = np.std(returns)
+        
+        if std_return == 0:
+            return 0
+        
+        # 计算日无风险利率
+        daily_risk_free = risk_free_rate / 252
+        
+        # 计算夏普比率
+        sharpe = (avg_return - daily_risk_free) / std_return
+        
+        # 年化夏普比率
+        annual_sharpe = sharpe * (252 ** 0.5)
+        
+        return annual_sharpe
+    except Exception as e:
+        logger.warning(f"计算夏普比率异常: {str(e)}")
+        return 0
+
 def get_asset_history(days: int = 30, include_metrics: bool = False):
     """获取指定天数的资产历史数据，可选择是否包含风险指标"""
     db = next(get_db())
@@ -726,9 +772,9 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
             max_drawdown = calculate_max_drawdown(result)
             
             # 计算波动率（标准差）
+            volatility = 0
             if len(result) > 1:
                 values = [record["totalAssets"] for record in result]
-                volatility = 0
                 if len(values) > 1:
                     import numpy as np
                     try:
@@ -741,15 +787,17 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
                         volatility = volatility * (252 ** 0.5)
                     except Exception as e:
                         logger.warning(f"计算波动率异常: {str(e)}")
-            else:
-                volatility = 0
+            
+            # 计算夏普比率
+            sharpe_ratio = calculate_sharpe_ratio(result)
             
             # 添加风险指标到返回结果
             return {
                 "history": result,
                 "metrics": {
                     "maxDrawdown": max_drawdown,
-                    "volatility": volatility
+                    "volatility": volatility,
+                    "sharpeRatio": sharpe_ratio
                 }
             }
         
