@@ -308,38 +308,69 @@ def execute_dca_task(plan_id: int):
                 # 获取成交详情
                 if order_id:
                     import time
-                    # 等待2秒让成交数据生成
-                    time.sleep(2)
+                    # 等待5秒让成交数据生成（增加等待时间）
+                    time.sleep(5)
                     
                     for attempt in range(5):  # 最多重试5次
                         try:
                             # 先尝试获取订单详情
                             order_detail = client.get_order_detail(order_id)
+                            logger.info(f"任务 {plan_id} 订单详情响应 (尝试{attempt+1}): {order_detail}")
+                            
                             if order_detail.get('code') == '0' and order_detail.get('data'):
                                 order_info = order_detail['data'][0]
                                 # 检查订单状态是否已完成
                                 if order_info.get('state') in ['filled', 'partially_filled']:
-                                    fill_details = {
-                                        'fillPx': order_info.get('avgPx'),  # 成交均价
-                                        'fillSz': order_info.get('accFillSz'),  # 累计成交数量
-                                        'ordId': order_id
-                                    }
-                                    logger.info(f"任务 {plan_id} 订单详情 (尝试{attempt+1}): {fill_details}")
-                                    break
+                                    # 直接从订单详情中获取成交价格和数量
+                                    avg_px = order_info.get('avgPx')
+                                    acc_fill_sz = order_info.get('accFillSz')
+                                    
+                                    # 确保值不为空
+                                    if avg_px and acc_fill_sz:
+                                        fill_details = {
+                                            'fillPx': avg_px,  # 成交均价
+                                            'fillSz': acc_fill_sz,  # 累计成交数量
+                                            'ordId': order_id
+                                        }
+                                        logger.info(f"任务 {plan_id} 从订单详情获取成交信息 (尝试{attempt+1}): {fill_details}")
+                                        break
                                 else:
                                     logger.info(f"任务 {plan_id} 订单状态: {order_info.get('state')} (尝试{attempt+1})")
                             
                             # 如果订单详情没有成交信息，尝试成交明细API
                             if not fill_details:
                                 fills_result = client.get_order_fills(order_id)
+                                logger.info(f"任务 {plan_id} 成交明细响应 (尝试{attempt+1}): {fills_result}")
+                                
                                 if fills_result.get('code') == '0' and fills_result.get('data'):
                                     fill_info = fills_result['data'][0]
+                                    fill_px = fill_info.get('fillPx')
+                                    fill_sz = fill_info.get('fillSz')
+                                    
+                                    # 确保值不为空
+                                    if fill_px and fill_sz:
+                                        fill_details = {
+                                            'fillPx': fill_px,  # 成交价格
+                                            'fillSz': fill_sz,  # 成交数量
+                                            'ordId': order_id
+                                        }
+                                        logger.info(f"任务 {plan_id} 从成交明细获取成交信息 (尝试{attempt+1}): {fill_details}")
+                                        break
+                            
+                            # 如果仍然没有获取到成交信息，尝试从原始订单结果中提取
+                            if not fill_details and order_result.get('data'):
+                                order_data = order_result['data'][0]
+                                # 有些情况下，原始订单结果中可能已经包含了成交价格和数量
+                                px = order_data.get('px') or order_data.get('avgPx')
+                                sz = order_data.get('sz') or order_data.get('accFillSz')
+                                
+                                if px and sz:
                                     fill_details = {
-                                        'fillPx': fill_info.get('fillPx'),  # 成交价格
-                                        'fillSz': fill_info.get('fillSz'),  # 成交数量
+                                        'fillPx': px,
+                                        'fillSz': sz,
                                         'ordId': order_id
                                     }
-                                    logger.info(f"任务 {plan_id} 成交明细 (尝试{attempt+1}): {fill_details}")
+                                    logger.info(f"任务 {plan_id} 从原始订单结果获取成交信息: {fill_details}")
                                     break
                             
                             if attempt < 4:  # 不是最后一次尝试
@@ -756,6 +787,7 @@ def get_transactions(
         if transaction.status == "success" and transaction.response:
             try:
                 response_data = json.loads(transaction.response)
+                logger.info(f"解析交易记录 ID: {transaction.id}, 响应数据: {response_data}")
                 
                 # 检查是否有成交详情
                 if 'fill_details' in response_data and response_data['fill_details']:
@@ -769,15 +801,44 @@ def get_transactions(
                 # 如果没有fill_details，尝试从order_result中获取
                 elif 'order_result' in response_data and response_data['order_result'].get('data'):
                     order_data = response_data['order_result']['data'][0]
-                    if 'avgPx' in order_data and order_data['avgPx']:
-                        trade_price = float(order_data['avgPx'])
-                    if 'accFillSz' in order_data and order_data['accFillSz']:
-                        trade_quantity = float(order_data['accFillSz'])
+                    # 尝试多种可能的字段名
+                    for price_field in ['avgPx', 'px', 'fillPx']:
+                        if price_field in order_data and order_data[price_field]:
+                            trade_price = float(order_data[price_field])
+                            break
+                    
+                    for size_field in ['accFillSz', 'sz', 'fillSz']:
+                        if size_field in order_data and order_data[size_field]:
+                            trade_quantity = float(order_data[size_field])
+                            break
+                
+                # 如果仍然没有获取到价格和数量，尝试从响应中的其他位置获取
+                if (trade_price is None or trade_quantity is None) and 'order_result' in response_data:
+                    # 检查是否有其他可能包含价格和数量的字段
+                    order_result = response_data['order_result']
+                    if 'data' in order_result and len(order_result['data']) > 0:
+                        for item in order_result['data']:
+                            # 遍历所有可能的字段
+                            for key, value in item.items():
+                                if 'px' in key.lower() and trade_price is None and value:
+                                    try:
+                                        trade_price = float(value)
+                                    except (ValueError, TypeError):
+                                        pass
+                                
+                                if ('sz' in key.lower() or 'size' in key.lower()) and trade_quantity is None and value:
+                                    try:
+                                        trade_quantity = float(value)
+                                    except (ValueError, TypeError):
+                                        pass
                         
             except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"解析交易响应失败: {str(e)}")
                 # 如果解析失败，保持为None
                 pass
+            
+            # 记录解析结果
+            logger.info(f"交易记录 ID: {transaction.id}, 解析结果: 价格={trade_price}, 数量={trade_quantity}")
         
         result.append({
             "id": transaction.id,
