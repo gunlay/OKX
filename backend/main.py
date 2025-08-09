@@ -11,6 +11,7 @@ import threading
 import json
 import logging
 import os
+import time
 from fastapi.middleware.cors import CORSMiddleware
 import pytz
 
@@ -821,6 +822,55 @@ def startup_event():
     except Exception as e:
         logger.exception(f"启动时记录资产数据异常: {str(e)}")
 
+# 添加调试接口
+@app.get("/api/debug/status")
+def get_debug_status():
+    """获取系统调试状态信息"""
+    db = next(get_db())
+    
+    try:
+        # 检查API配置
+        config = db.query(UserConfig).first()
+        has_config = bool(config)
+        
+        # 检查交易记录
+        total_transactions = db.query(Transaction).count()
+        success_transactions = db.query(Transaction).filter(Transaction.status == "success").count()
+        
+        # 检查定投计划
+        total_plans = db.query(DCAPlan).count()
+        enabled_plans = db.query(DCAPlan).filter(DCAPlan.status == "enabled").count()
+        
+        # 检查最近的交易记录
+        recent_transactions = db.query(Transaction).order_by(Transaction.executed_at.desc()).limit(5).all()
+        recent_tx_info = []
+        for tx in recent_transactions:
+            recent_tx_info.append({
+                "id": tx.id,
+                "symbol": tx.symbol,
+                "direction": tx.direction,
+                "amount": tx.amount,
+                "status": tx.status,
+                "executed_at": tx.executed_at.isoformat()
+            })
+        
+        return {
+            "has_api_config": has_config,
+            "total_transactions": total_transactions,
+            "success_transactions": success_transactions,
+            "total_plans": total_plans,
+            "enabled_plans": enabled_plans,
+            "recent_transactions": recent_tx_info,
+            "cache_status": {
+                "has_cache": bool(assets_cache["data"]),
+                "cache_timestamp": assets_cache["timestamp"],
+                "cache_age_seconds": time.time() - assets_cache["timestamp"] if assets_cache["timestamp"] else 0
+            }
+        }
+    except Exception as e:
+        logger.exception(f"获取调试状态异常: {str(e)}")
+        return {"error": str(e)}
+
 # 添加手动执行任务接口
 @app.post("/api/dca-plan/{plan_id}/execute")
 def manual_execute_plan(plan_id: int):
@@ -1232,12 +1282,19 @@ def calculate_dca_assets_and_investment(db, client):
     # 获取所有成功的交易记录
     transactions = db.query(Transaction).filter(Transaction.status == "success").all()
     
+    # 如果没有交易记录，直接返回0值
+    if not transactions:
+        return 0, [], 0, None
+    
     # 按币种统计买入和卖出数量
     coin_balances = {}  # 格式: {symbol: {'bought': 数量, 'sold': 数量, 'investment': 投入金额}}
     total_investment = 0
     
+    logger.info(f"开始处理 {len(transactions)} 条交易记录")
+    
     for tx in transactions:
         symbol = tx.symbol.split('-')[0]  # 例如从"BTC-USDT"提取"BTC"
+        logger.info(f"处理交易: ID={tx.id}, 币种={symbol}, 方向={tx.direction}, 金额={tx.amount}")
         
         if symbol not in coin_balances:
             coin_balances[symbol] = {'bought': 0, 'sold': 0, 'investment': 0}
@@ -1246,6 +1303,7 @@ def calculate_dca_assets_and_investment(db, client):
             # 解析交易响应获取实际成交数量和金额
             if tx.response:
                 response_data = json.loads(tx.response)
+                logger.info(f"交易 {tx.id} 响应数据: {response_data}")
                 
                 # 检查是否有成交详情
                 if 'fill_details' in response_data and response_data['fill_details']:
@@ -1345,22 +1403,37 @@ def calculate_dca_assets_and_investment(db, client):
     assets = []
     total_assets = 0
     
+    logger.info(f"开始计算资产价值，净持仓: {net_balances}")
+    
     for symbol, balance in net_balances.items():
         if balance > 0:
-            # 获取当前价格
-            ticker_result = client.get_ticker(f"{symbol}-USDT")
-            if ticker_result.get('code') == '0' and ticker_result.get('data'):
-                price = float(ticker_result['data'][0].get('last', 0))
-                value_in_usdt = balance * price
+            try:
+                # 获取当前价格
+                ticker_symbol = f"{symbol}-USDT"
+                logger.info(f"获取 {ticker_symbol} 价格")
+                ticker_result = client.get_ticker(ticker_symbol)
+                logger.info(f"{ticker_symbol} 价格响应: {ticker_result}")
                 
-                assets.append({
-                    "currency": symbol,
-                    "amount": balance,
-                    "valueInUsdt": value_in_usdt
-                })
-                
-                total_assets += value_in_usdt
+                if ticker_result.get('code') == '0' and ticker_result.get('data'):
+                    price = float(ticker_result['data'][0].get('last', 0))
+                    value_in_usdt = balance * price
+                    
+                    logger.info(f"{symbol}: 数量={balance}, 价格={price}, 价值={value_in_usdt}")
+                    
+                    assets.append({
+                        "currency": symbol,
+                        "amount": balance,
+                        "valueInUsdt": value_in_usdt
+                    })
+                    
+                    total_assets += value_in_usdt
+                else:
+                    logger.warning(f"获取 {ticker_symbol} 价格失败: {ticker_result}")
+            except Exception as e:
+                logger.exception(f"处理 {symbol} 资产时出错: {str(e)}")
+                continue
     
+    logger.info(f"资产计算完成: 总资产={total_assets}, 资产列表={assets}")
     return total_assets, assets, total_investment, None
 
 def calculate_total_investment(db):
@@ -1490,13 +1563,18 @@ def get_assets_overview(force_refresh: bool = False):
     config = db.query(UserConfig).first()
     
     if not config:
-        return {
+        result = {
             "totalAssets": 0,
             "totalInvestment": 0,
             "totalProfit": 0,
             "assetDistribution": [],
+            "error": "未找到API配置，请先在配置中心设置OKX API密钥",
             "lastUpdated": datetime.now(TIMEZONE).isoformat()
         }
+        # 即使没有配置也要缓存结果，避免频繁查询数据库
+        assets_cache["data"] = result
+        assets_cache["timestamp"] = current_time
+        return result
     
     try:
         # 解密API密钥
@@ -1518,9 +1596,13 @@ def get_assets_overview(force_refresh: bool = False):
         client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
         
         # 1. 计算定投策略的资产价值、投入和收益
+        logger.info("开始计算定投策略资产数据")
         total_assets, assets, total_investment, error = calculate_dca_assets_and_investment(db, client)
+        logger.info(f"资产计算结果: 总资产={total_assets}, 总投入={total_investment}, 资产数量={len(assets)}")
+        
         if error:
-            return {
+            logger.error(f"计算资产数据时出错: {error}")
+            result = {
                 "totalAssets": 0,
                 "totalInvestment": 0,
                 "totalProfit": 0,
@@ -1528,6 +1610,10 @@ def get_assets_overview(force_refresh: bool = False):
                 "error": error,
                 "lastUpdated": datetime.now(TIMEZONE).isoformat()
             }
+            # 缓存错误结果，避免频繁重试
+            assets_cache["data"] = result
+            assets_cache["timestamp"] = current_time
+            return result
         
         # 2. 计算总收益和年化收益率
         total_profit = total_assets - total_investment

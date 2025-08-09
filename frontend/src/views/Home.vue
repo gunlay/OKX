@@ -156,20 +156,32 @@ export default {
           this.refreshing = true;
         }
         
+        console.log('开始获取资产数据, forceRefresh:', forceRefresh);
+        
         // 使用修改后的API函数，直接传递forceRefresh参数
         const response = await assetApi.getOverview(forceRefresh);
         const data = response.data;
         
+        console.log('API响应数据:', data);
+        
         if (data.error) {
           this.error = data.error;
+          console.error('API返回错误:', data.error);
           return;
         }
         
-        this.totalAssets = data.totalAssets;
-        this.totalInvestment = data.totalInvestment;
-        this.totalProfit = data.totalProfit;
+        this.totalAssets = data.totalAssets || 0;
+        this.totalInvestment = data.totalInvestment || 0;
+        this.totalProfit = data.totalProfit || 0;
         this.annualizedReturn = data.annualizedReturn || 0;
-        this.assetDistribution = data.assetDistribution;
+        this.assetDistribution = data.assetDistribution || [];
+        
+        console.log('设置资产数据:', {
+          totalAssets: this.totalAssets,
+          totalInvestment: this.totalInvestment,
+          totalProfit: this.totalProfit,
+          assetDistribution: this.assetDistribution
+        });
         
         // 更新策略信息
         if (data.strategyInfo) {
