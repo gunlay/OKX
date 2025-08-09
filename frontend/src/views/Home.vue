@@ -665,12 +665,11 @@ export default {
   }
   
   .header-buttons {
-    flex-direction: column;
     gap: 8px;
   }
   
   .refresh-btn, .logout-btn {
-    padding: 6px 12px;
+    padding: 6px 10px;
     font-size: 12px;
   }
   

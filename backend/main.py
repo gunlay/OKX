@@ -1576,20 +1576,34 @@ def get_usdt_balance():
         # 创建OKX客户端
         client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
         
-        # 获取账户余额
-        balance_result = client.get_trading_balance()
+        # 获取账户余额 - 使用正确的API调用
+        balance_result = client.get_account_balance()
+        logger.info(f"获取账户余额API响应: {balance_result}")
         
         if balance_result.get('code') != '0':
-            return {"balance": 0, "error": f"获取余额失败: {balance_result.get('msg', '未知错误')}"}
+            error_msg = balance_result.get('msg', '未知错误')
+            logger.error(f"获取余额失败: {error_msg}")
+            return {"balance": 0, "error": f"获取余额失败: {error_msg}"}
         
         # 查找USDT余额
         usdt_balance = 0
-        for item in balance_result.get('data', []):
-            for balance in item.get('details', []):
-                if balance.get('ccy') == 'USDT':
-                    usdt_balance = float(balance.get('availBal', 0))
-                    break
+        data = balance_result.get('data', [])
+        logger.info(f"余额数据: {data}")
         
+        for item in data:
+            details = item.get('details', [])
+            for balance in details:
+                ccy = balance.get('ccy', '')
+                if ccy == 'USDT':
+                    avail_bal = balance.get('availBal', '0')
+                    try:
+                        usdt_balance = float(avail_bal)
+                        logger.info(f"找到USDT余额: {usdt_balance}")
+                        break
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"解析USDT余额失败: {avail_bal}, 错误: {str(e)}")
+        
+        logger.info(f"最终USDT余额: {usdt_balance}")
         return {"balance": usdt_balance}
     
     except Exception as e:
