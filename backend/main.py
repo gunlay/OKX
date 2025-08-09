@@ -1062,11 +1062,15 @@ def get_transactions(
     result = []
     for transaction in transactions:
         # 计算该任务在此交易之前的执行次数
-        execution_count = db.query(Transaction).filter(
-            Transaction.plan_id == transaction.plan_id,
-            Transaction.executed_at <= transaction.executed_at,
-            Transaction.status == "success"
-        ).count()
+        try:
+            execution_count = db.query(Transaction).filter(
+                Transaction.plan_id == transaction.plan_id,
+                Transaction.executed_at <= transaction.executed_at,
+                Transaction.status == "success"
+            ).count()
+        except Exception as e:
+            logger.warning(f"计算执行次数失败: {str(e)}")
+            execution_count = 1
         
         # 解析交易响应获取成交价格和数量
         trade_price = None
