@@ -708,8 +708,7 @@ def calculate_sharpe_ratio(result, risk_free_rate=0.02):
         return 0
     
     try:
-        import numpy as np
-        
+        # 不使用numpy，用纯Python实现
         # 提取总资产值
         values = [record["totalAssets"] for record in result]
         
@@ -717,11 +716,15 @@ def calculate_sharpe_ratio(result, risk_free_rate=0.02):
         returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
                 for i in range(1, len(values))]
         
+        if not returns:
+            return 0
+        
         # 计算平均日收益率
-        avg_return = np.mean(returns)
+        avg_return = sum(returns) / len(returns)
         
         # 计算日收益率标准差
-        std_return = np.std(returns)
+        variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
+        std_return = variance ** 0.5
         
         if std_return == 0:
             return 0
@@ -777,15 +780,18 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
             if len(result) > 1:
                 values = [record["totalAssets"] for record in result]
                 if len(values) > 1:
-                    import numpy as np
                     try:
                         # 计算日收益率
                         returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
                                 for i in range(1, len(values))]
-                        # 计算标准差
-                        volatility = float(np.std(returns))
-                        # 年化波动率（假设252个交易日）
-                        volatility = volatility * (252 ** 0.5)
+                        
+                        if returns:
+                            # 计算标准差（不使用numpy）
+                            mean_return = sum(returns) / len(returns)
+                            variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
+                            volatility = variance ** 0.5
+                            # 年化波动率（假设252个交易日）
+                            volatility = volatility * (252 ** 0.5)
                     except Exception as e:
                         logger.warning(f"计算波动率异常: {str(e)}")
             
