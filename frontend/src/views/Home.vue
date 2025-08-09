@@ -4,7 +4,35 @@
     <div class="header">
       <div class="user-info">
         <span class="welcome">欢迎使用 OKX 定投服务</span>
-        <button class="logout-btn" @click="logout">退出</button>
+        <div class="header-buttons">
+          <button class="refresh-btn" @click="refreshData" :disabled="refreshing">
+            <span v-if="refreshing">刷新中...</span>
+            <span v-else>刷新数据</span>
+          </button>
+          <button class="logout-btn" @click="logout">退出</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- USDT余额显示 -->
+    <div class="usdt-balance-section">
+      <div class="balance-card">
+        <div class="balance-header">
+          <h3>OKX账户余额</h3>
+          <span class="balance-refresh" @click="refreshUsdtBalance" :class="{ loading: usdtLoading }">
+            🔄
+          </span>
+        </div>
+        <div class="balance-content">
+          <div class="balance-item">
+            <span class="balance-label">可用USDT:</span>
+            <span class="balance-value">
+              <span v-if="usdtLoading" class="loading-text">加载中...</span>
+              <span v-else-if="usdtBalance.error" class="error-text">{{ usdtBalance.error }}</span>
+              <span v-else class="amount">${{ formatNumber(usdtBalance.balance) }}</span>
+            </span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -12,10 +40,6 @@
     <div class="asset-overview">
       <div class="card-header">
         <h3>定投策略资产概览</h3>
-        <button class="refresh-btn" @click="refreshData" :disabled="refreshing">
-          <span v-if="refreshing">刷新中...</span>
-          <span v-else>刷新数据</span>
-        </button>
       </div>
       <div class="strategy-note">
         <i class="note-icon">ℹ️</i>
@@ -111,7 +135,7 @@
 </template>
 
 <script>
-import { assetApi } from '../api.js';
+import { assetApi, accountApi } from '../api.js';
 import AssetTrend from '../components/AssetTrend.vue';
 
 export default {
@@ -135,11 +159,18 @@ export default {
         startDate: null,
         executionCount: 0
       },
-      colors: ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#faad14', '#13c2c2', '#f5222d']
+      colors: ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#faad14', '#13c2c2', '#f5222d'],
+      // USDT余额相关
+      usdtBalance: {
+        balance: 0,
+        error: null
+      },
+      usdtLoading: false
     }
   },
   mounted() {
     this.fetchAssetData();
+    this.fetchUsdtBalance();
   },
   computed: {
     filteredAssetDistribution() {
@@ -299,6 +330,32 @@ export default {
   color: #333;
 }
 
+.header-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.refresh-btn {
+  padding: 8px 16px;
+  background: #1890ff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.3s;
+}
+
+.refresh-btn:hover {
+  background: #40a9ff;
+}
+
+.refresh-btn:disabled {
+  background: #bae7ff;
+  cursor: not-allowed;
+}
+
 .logout-btn {
   padding: 8px 16px;
   background: #ff4d4f;
@@ -307,6 +364,84 @@ export default {
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+}
+
+.logout-btn:hover {
+  background: #ff7875;
+}
+
+/* USDT余额样式 */
+.usdt-balance-section {
+  margin-bottom: 20px;
+}
+
+.balance-card {
+  background: white;
+  border-radius: 12px;
+  padding: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.balance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.balance-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #333;
+}
+
+.balance-refresh {
+  cursor: pointer;
+  font-size: 16px;
+  transition: transform 0.3s;
+  user-select: none;
+}
+
+.balance-refresh:hover {
+  transform: scale(1.1);
+}
+
+.balance-refresh.loading {
+  animation: spin 1s linear infinite;
+}
+
+.balance-content {
+  padding: 5px 0;
+}
+
+.balance-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.balance-label {
+  font-size: 14px;
+  color: #666;
+}
+
+.balance-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.balance-value .amount {
+  color: #1890ff;
+}
+
+.balance-value .loading-text {
+  color: #999;
+  font-size: 14px;
+}
+
+.balance-value .error-text {
+  color: #ff4d4f;
+  font-size: 12px;
 }
 
 .asset-overview {
@@ -324,26 +459,6 @@ export default {
   margin: 0;
   font-size: 18px;
   color: #333;
-}
-
-.refresh-btn {
-  padding: 6px 12px;
-  background: #1890ff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background 0.3s;
-}
-
-.refresh-btn:hover {
-  background: #40a9ff;
-}
-
-.refresh-btn:disabled {
-  background: #bae7ff;
-  cursor: not-allowed;
 }
 
 .asset-card {
@@ -547,6 +662,28 @@ export default {
 @media (max-width: 480px) {
   .home {
     padding: 15px;
+  }
+  
+  .header-buttons {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .refresh-btn, .logout-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  
+  .balance-card {
+    padding: 12px;
+  }
+  
+  .balance-header h3 {
+    font-size: 14px;
+  }
+  
+  .balance-value {
+    font-size: 14px;
   }
   
   .asset-card {

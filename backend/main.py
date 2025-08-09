@@ -1555,6 +1555,47 @@ def calculate_total_investment(db):
     logger.warning("calculate_total_investment函数已被弃用，请使用calculate_dca_assets_and_investment")
     return 0
 
+@app.get("/api/account/usdt-balance")
+def get_usdt_balance():
+    """获取OKX账户中的USDT余额"""
+    db = next(get_db())
+    config = db.query(UserConfig).first()
+    
+    if not config:
+        return {"balance": 0, "error": "未找到API配置"}
+    
+    try:
+        # 解密API密钥
+        api_key = decrypt_text(config.api_key)
+        secret_key = decrypt_text(config.secret_key)
+        passphrase = decrypt_text(config.passphrase)
+        
+        if not api_key or not secret_key or not passphrase:
+            return {"balance": 0, "error": "API配置不完整"}
+        
+        # 创建OKX客户端
+        client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
+        
+        # 获取账户余额
+        balance_result = client.get_trading_balance()
+        
+        if balance_result.get('code') != '0':
+            return {"balance": 0, "error": f"获取余额失败: {balance_result.get('msg', '未知错误')}"}
+        
+        # 查找USDT余额
+        usdt_balance = 0
+        for item in balance_result.get('data', []):
+            for balance in item.get('details', []):
+                if balance.get('ccy') == 'USDT':
+                    usdt_balance = float(balance.get('availBal', 0))
+                    break
+        
+        return {"balance": usdt_balance}
+    
+    except Exception as e:
+        logger.exception(f"获取USDT余额异常: {str(e)}")
+        return {"balance": 0, "error": f"获取余额异常: {str(e)}"}
+
 @app.get("/api/assets/overview")
 def get_assets_overview(force_refresh: bool = False):
     """获取定投策略的资产概览数据，包括总资产、总投入、总收益和资产分布"""

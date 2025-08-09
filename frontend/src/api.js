@@ -55,6 +55,12 @@ export const assetApi = {
   getHistory: (days = 30, includeMetrics = false) => api.get('/assets/history', { params: { days, include_metrics: includeMetrics } }),
 };
 
+// 账户相关 API
+export const accountApi = {
+  // 获取USDT余额
+  getUsdtBalance: () => api.get('/account/usdt-balance'),
+};
+
 // 交易记录相关 API
 export const transactionApi = {
   // 获取交易记录列表
