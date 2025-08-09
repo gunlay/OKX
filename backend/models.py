@@ -46,6 +46,7 @@ class Transaction(Base):
     direction = Column(String)  # buy, sell
     status = Column(String)  # success, failed
     response = Column(Text)  # 存储API响应
+    execution_count = Column(Integer, default=1)  # 任务执行次数
     executed_at = Column(DateTime, default=datetime.utcnow)
 
 # 资产历史记录模型

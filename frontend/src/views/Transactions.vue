@@ -50,6 +50,14 @@
         <div class="transaction-content">
           <div class="transaction-info">
             <div class="info-row">
+              <span class="label">任务标题:</span>
+              <span class="value">{{ transaction.plan_title || '未知任务' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">执行次数:</span>
+              <span class="value">第{{ transaction.execution_count }}次</span>
+            </div>
+            <div class="info-row">
               <span class="label">币种:</span>
               <span class="value">{{ transaction.symbol }}</span>
             </div>
