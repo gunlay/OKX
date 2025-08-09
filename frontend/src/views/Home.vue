@@ -294,6 +294,35 @@ export default {
       return start;
     },
     
+    async fetchUsdtBalance() {
+      this.usdtLoading = true;
+      this.usdtBalance.error = null;
+      
+      try {
+        console.log('开始获取USDT余额...');
+        const response = await accountApi.getUsdtBalance();
+        console.log('USDT余额API响应:', response);
+        
+        if (response.error) {
+          this.usdtBalance.error = response.error;
+          this.usdtBalance.balance = 0;
+        } else {
+          this.usdtBalance.balance = response.balance || 0;
+          console.log('设置USDT余额:', this.usdtBalance.balance);
+        }
+      } catch (error) {
+        console.error('获取USDT余额失败:', error);
+        this.usdtBalance.error = '获取余额失败';
+        this.usdtBalance.balance = 0;
+      } finally {
+        this.usdtLoading = false;
+      }
+    },
+    
+    async refreshUsdtBalance() {
+      await this.fetchUsdtBalance();
+    },
+    
     logout() {
       // 退出登录逻辑
       if (confirm('确定要退出登录吗？')) {
