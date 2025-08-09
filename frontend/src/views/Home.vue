@@ -295,27 +295,47 @@ export default {
     },
     
     async fetchUsdtBalance() {
+      console.log('fetchUsdtBalance 方法被调用');
       this.usdtLoading = true;
       this.usdtBalance.error = null;
       
       try {
         console.log('开始获取USDT余额...');
-        const response = await accountApi.getUsdtBalance();
-        console.log('USDT余额API响应:', response);
+        console.log('API URL:', 'http://13.158.74.102:8000/api/account/usdt-balance');
         
-        if (response.error) {
-          this.usdtBalance.error = response.error;
+        const response = await accountApi.getUsdtBalance();
+        console.log('USDT余额API完整响应:', response);
+        console.log('响应数据类型:', typeof response);
+        console.log('响应数据:', response.data);
+        
+        // 检查响应结构
+        const data = response.data || response;
+        console.log('处理后的数据:', data);
+        
+        if (data.error) {
+          console.log('API返回错误:', data.error);
+          this.usdtBalance.error = data.error;
           this.usdtBalance.balance = 0;
         } else {
-          this.usdtBalance.balance = response.balance || 0;
-          console.log('设置USDT余额:', this.usdtBalance.balance);
+          const balance = data.balance || 0;
+          console.log('从API获取的余额:', balance);
+          this.usdtBalance.balance = balance;
+          console.log('设置到组件的USDT余额:', this.usdtBalance.balance);
+          console.log('当前usdtBalance对象:', this.usdtBalance);
         }
       } catch (error) {
-        console.error('获取USDT余额失败:', error);
-        this.usdtBalance.error = '获取余额失败';
+        console.error('获取USDT余额失败 - 完整错误信息:', error);
+        console.error('错误响应:', error.response);
+        console.error('错误消息:', error.message);
+        this.usdtBalance.error = '获取余额失败: ' + (error.response?.data?.detail || error.message);
         this.usdtBalance.balance = 0;
       } finally {
         this.usdtLoading = false;
+        console.log('fetchUsdtBalance 完成，最终状态:', {
+          balance: this.usdtBalance.balance,
+          error: this.usdtBalance.error,
+          loading: this.usdtLoading
+        });
       }
     },
     
