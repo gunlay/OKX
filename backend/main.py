@@ -1702,7 +1702,8 @@ def get_assets_overview(force_refresh: bool = False):
         for asset in full_asset_distribution:
             simplified_distribution.append({
                 "currency": asset["currency"],
-                "percentage": asset["percentage"]
+                "percentage": asset["percentage"],
+                "valueInUsdt": asset["valueInUsdt"]
             })
         
         # 获取策略信息
