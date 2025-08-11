@@ -144,17 +144,44 @@ export default {
       chart.value = echarts.init(chartRef.value);
       
       // 处理数据 - 修复日期格式化问题
-      const dates = historyData.value.map(item => {
+      const dates = [];
+      const dateMap = new Map(); // 用于跟踪重复日期
+      
+      historyData.value.forEach((item, index) => {
         // 确保正确解析日期字符串
         const date = new Date(item.date);
         // 检查日期是否有效
         if (isNaN(date.getTime())) {
           console.warn('无效的日期:', item.date);
-          return '无效日期';
+          dates.push('无效日期');
+          return;
         }
+        
         const month = date.getMonth() + 1;
         const day = date.getDate();
-        return `${month}/${day}`;
+        const baseStr = `${month}/${day}`;
+        
+        // 检查是否已经有相同的日期
+        if (dateMap.has(baseStr)) {
+          // 如果有重复，添加时间信息或序号
+          const count = dateMap.get(baseStr) + 1;
+          dateMap.set(baseStr, count);
+          
+          // 添加时间信息来区分
+          const hour = date.getHours();
+          const minute = date.getMinutes();
+          if (hour === 0 && minute === 0) {
+            // 如果是零点，使用序号
+            dates.push(`${baseStr}(${count})`);
+          } else {
+            // 否则显示时间
+            dates.push(`${baseStr} ${hour}:${minute.toString().padStart(2, '0')}`);
+          }
+        } else {
+          // 第一次出现这个日期
+          dateMap.set(baseStr, 1);
+          dates.push(baseStr);
+        }
       });
       
       const totalAssets = historyData.value.map(item => item.totalAssets);
