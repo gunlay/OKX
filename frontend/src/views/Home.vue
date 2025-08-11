@@ -99,7 +99,7 @@
               class="legend-item"
             >
               <span class="color-dot" :style="{ background: getAssetColor(index) }"></span>
-              <span>{{ asset.currency }}: {{ formatNumber(asset.valueInUsdt || 0) }} ({{ asset.percentage.toFixed(2) }}%)</span>
+              <span>{{ asset.currency }}: ${{ formatNumber(asset.valueInUsdt || 0) }} ({{ asset.percentage.toFixed(2) }}%)</span>
             </div>
           </div>
         </div>
