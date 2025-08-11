@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import hmac
 import hashlib
 import base64
@@ -6,6 +8,7 @@ import json
 import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
+import threading
 
 class OKXClient:
     def __init__(self, api_key: str, secret_key: str, passphrase: str, sandbox: bool = False):
@@ -18,6 +21,34 @@ class OKXClient:
             self.base_url = "https://www.okx.com/api/v5/sandbox"
         else:
             self.base_url = "https://www.okx.com/api/v5"
+        
+        # 创建会话和连接池
+        self.session = requests.Session()
+        
+        # 配置重试策略
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        
+        # 配置HTTP适配器
+        adapter = HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=retry_strategy
+        )
+        
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+        
+        # 设置默认超时
+        self.timeout = 30
+        
+        # 请求缓存
+        self._cache = {}
+        self._cache_lock = threading.Lock()
+        self._cache_ttl = 60  # 缓存60秒
     
     def _get_timestamp(self):
         """获取 ISO8601 毫秒格式的时间戳，符合OKX要求"""
@@ -33,11 +64,43 @@ class OKXClient:
         )
         return base64.b64encode(mac.digest()).decode()
     
-    def _request(self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None) -> Dict[str, Any]:
+    def _get_cache_key(self, method: str, endpoint: str, params: Optional[Dict] = None) -> str:
+        """生成缓存键"""
+        key_parts = [method, endpoint]
+        if params:
+            key_parts.append(str(sorted(params.items())))
+        return "|".join(key_parts)
+    
+    def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """从缓存获取数据"""
+        with self._cache_lock:
+            if cache_key in self._cache:
+                cached_data, timestamp = self._cache[cache_key]
+                if time.time() - timestamp < self._cache_ttl:
+                    return cached_data
+                else:
+                    # 缓存过期，删除
+                    del self._cache[cache_key]
+        return None
+    
+    def _set_cache(self, cache_key: str, data: Dict[str, Any]) -> None:
+        """设置缓存"""
+        with self._cache_lock:
+            self._cache[cache_key] = (data, time.time())
+    
+    def _request(self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None, use_cache: bool = True) -> Dict[str, Any]:
         """发送请求"""
         # 确保endpoint不以斜杠开头，避免URL中出现双斜杠
         if endpoint.startswith('/'):
             endpoint = endpoint[1:]
+        
+        # 对于GET请求，尝试从缓存获取
+        cache_key = None
+        if method == 'GET' and use_cache:
+            cache_key = self._get_cache_key(method, endpoint, params)
+            cached_result = self._get_from_cache(cache_key)
+            if cached_result:
+                return cached_result
             
         url = f"{self.base_url}/{endpoint}"
         # 获取请求路径，用于签名
@@ -55,14 +118,20 @@ class OKXClient:
 
         try:
             if method == 'GET':
-                response = requests.get(url, headers=headers, params=params)
+                response = self.session.get(url, headers=headers, params=params, timeout=self.timeout)
             elif method == 'POST':
-                response = requests.post(url, headers=headers, json=data)
+                response = self.session.post(url, headers=headers, json=data, timeout=self.timeout)
             else:
                 raise ValueError(f"Unsupported method: {method}")
 
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # 对于成功的GET请求，缓存结果
+            if method == 'GET' and use_cache and result.get('code') == '0':
+                self._set_cache(cache_key, result)
+            
+            return result
 
         except requests.exceptions.RequestException as e:
             return {

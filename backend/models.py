@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -43,11 +43,19 @@ class Transaction(Base):
     plan_id = Column(Integer, index=True)
     symbol = Column(String, index=True)
     amount = Column(Float)
-    direction = Column(String)  # buy, sell
-    status = Column(String)  # success, failed
+    direction = Column(String, index=True)  # buy, sell
+    status = Column(String, index=True)  # success, failed
     response = Column(Text)  # 存储API响应
     execution_count = Column(Integer, default=1)  # 任务执行次数
-    executed_at = Column(DateTime, default=datetime.utcnow)
+    executed_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # 添加复合索引来优化常用查询
+    __table_args__ = (
+        Index('idx_plan_executed_at', 'plan_id', 'executed_at'),
+        Index('idx_status_executed_at', 'status', 'executed_at'),
+        Index('idx_symbol_direction_status', 'symbol', 'direction', 'status'),
+        Index('idx_plan_status_executed', 'plan_id', 'status', 'executed_at'),
+    )
 
 # 资产历史记录模型
 class AssetHistory(Base):

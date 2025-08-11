@@ -1409,39 +1409,79 @@ def calculate_dca_assets_and_investment(db, client):
         if net_balance > 0:
             net_balances[symbol] = net_balance
     
-    # 计算当前价值
+    # 批量获取价格数据，减少API调用次数
     assets = []
     total_assets = 0
     
     logger.info(f"开始计算资产价值，净持仓: {net_balances}")
     
-    for symbol, balance in net_balances.items():
-        if balance > 0:
-            try:
-                # 获取当前价格
-                ticker_symbol = f"{symbol}-USDT"
-                logger.info(f"获取 {ticker_symbol} 价格")
-                ticker_result = client.get_ticker(ticker_symbol)
-                logger.info(f"{ticker_symbol} 价格响应: {ticker_result}")
+    if net_balances:
+        try:
+            # 批量获取所有币种的价格
+            symbols_to_fetch = [f"{symbol}-USDT" for symbol in net_balances.keys()]
+            logger.info(f"批量获取价格: {symbols_to_fetch}")
+            
+            # 使用批量接口获取所有价格
+            all_tickers_result = client._request('GET', 'market/tickers', params={'instType': 'SPOT'})
+            
+            if all_tickers_result.get('code') == '0':
+                # 创建价格映射
+                price_map = {}
+                for ticker in all_tickers_result.get('data', []):
+                    inst_id = ticker.get('instId', '')
+                    if inst_id in symbols_to_fetch:
+                        try:
+                            price = float(ticker.get('last', 0))
+                            if price > 0:
+                                symbol = inst_id.split('-')[0]
+                                price_map[symbol] = price
+                        except (ValueError, TypeError):
+                            continue
                 
-                if ticker_result.get('code') == '0' and ticker_result.get('data'):
-                    price = float(ticker_result['data'][0].get('last', 0))
-                    value_in_usdt = balance * price
-                    
-                    logger.info(f"{symbol}: 数量={balance}, 价格={price}, 价值={value_in_usdt}")
-                    
-                    assets.append({
-                        "currency": symbol,
-                        "amount": balance,
-                        "valueInUsdt": value_in_usdt
-                    })
-                    
-                    total_assets += value_in_usdt
-                else:
-                    logger.warning(f"获取 {ticker_symbol} 价格失败: {ticker_result}")
-            except Exception as e:
-                logger.exception(f"处理 {symbol} 资产时出错: {str(e)}")
-                continue
+                logger.info(f"获取到价格映射: {price_map}")
+                
+                # 计算每个币种的价值
+                for symbol, balance in net_balances.items():
+                    if balance > 0 and symbol in price_map:
+                        price = price_map[symbol]
+                        value_in_usdt = balance * price
+                        
+                        logger.info(f"{symbol}: 数量={balance}, 价格={price}, 价值={value_in_usdt}")
+                        
+                        assets.append({
+                            "currency": symbol,
+                            "amount": balance,
+                            "valueInUsdt": value_in_usdt
+                        })
+                        
+                        total_assets += value_in_usdt
+                    elif balance > 0:
+                        logger.warning(f"未找到 {symbol} 的价格数据")
+            else:
+                logger.error(f"批量获取价格失败: {all_tickers_result}")
+                # 回退到单个获取
+                for symbol, balance in net_balances.items():
+                    if balance > 0:
+                        try:
+                            ticker_symbol = f"{symbol}-USDT"
+                            ticker_result = client.get_ticker(ticker_symbol)
+                            
+                            if ticker_result.get('code') == '0' and ticker_result.get('data'):
+                                price = float(ticker_result['data'][0].get('last', 0))
+                                value_in_usdt = balance * price
+                                
+                                assets.append({
+                                    "currency": symbol,
+                                    "amount": balance,
+                                    "valueInUsdt": value_in_usdt
+                                })
+                                
+                                total_assets += value_in_usdt
+                        except Exception as e:
+                            logger.exception(f"处理 {symbol} 资产时出错: {str(e)}")
+                            continue
+        except Exception as e:
+            logger.exception(f"批量获取价格异常: {str(e)}")
     
     logger.info(f"资产计算完成: 总资产={total_assets}, 资产列表={assets}")
     return total_assets, assets, total_investment, None
