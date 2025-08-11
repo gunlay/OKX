@@ -99,6 +99,20 @@ export default {
       sharpeRatio: 0
     });
     
+    // 生成指定天数的日期数组
+    const generateDateRange = (days) => {
+      const dates = [];
+      const today = new Date();
+      
+      for (let i = days - 1; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - i);
+        dates.push(date);
+      }
+      
+      return dates;
+    };
+    
     // 获取历史数据
     const fetchHistoryData = async (days) => {
       try {
@@ -107,22 +121,49 @@ export default {
         
         const response = await assetApi.getHistory(days, true); // 请求包含风险指标的数据
         
+        let rawData = [];
         if (response.data.history) {
           // 新的API格式，包含历史数据和风险指标
-          historyData.value = response.data.history;
+          rawData = response.data.history;
           riskMetrics.value = response.data.metrics || { maxDrawdown: 0, volatility: 0 };
         } else {
           // 旧的API格式，只有历史数据
-          historyData.value = response.data;
+          rawData = response.data;
         }
         
-        hasData.value = historyData.value && historyData.value.length > 0;
+        // 生成完整的日期范围
+        const dateRange = generateDateRange(days);
         
-        if (hasData.value) {
-          nextTick(() => {
-            initChart();
-          });
-        }
+        // 创建日期到数据的映射
+        const dataMap = new Map();
+        rawData.forEach(item => {
+          const date = new Date(item.date);
+          const dateKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+          dataMap.set(dateKey, item);
+        });
+        
+        // 填充完整的数据数组
+        historyData.value = dateRange.map(date => {
+          const dateKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+          
+          if (dataMap.has(dateKey)) {
+            return dataMap.get(dateKey);
+          } else {
+            // 如果没有数据，使用0填充
+            return {
+              date: date.toISOString(),
+              totalAssets: 0,
+              totalInvestment: 0,
+              totalProfit: 0
+            };
+          }
+        });
+        
+        hasData.value = true; // 总是有数据，因为我们填充了0值
+        
+        nextTick(() => {
+          initChart();
+        });
       } catch (err) {
         console.error('获取资产历史数据失败:', err);
         error.value = '获取资产历史数据失败: ' + (err.response?.data?.detail || err.message);
@@ -143,45 +184,12 @@ export default {
       // 创建新图表
       chart.value = echarts.init(chartRef.value);
       
-      // 处理数据 - 修复日期格式化问题
-      const dates = [];
-      const dateMap = new Map(); // 用于跟踪重复日期
-      
-      historyData.value.forEach((item, index) => {
-        // 确保正确解析日期字符串
+      // 处理数据 - 简洁的日期显示
+      const dates = historyData.value.map(item => {
         const date = new Date(item.date);
-        // 检查日期是否有效
-        if (isNaN(date.getTime())) {
-          console.warn('无效的日期:', item.date);
-          dates.push('无效日期');
-          return;
-        }
-        
         const month = date.getMonth() + 1;
         const day = date.getDate();
-        const baseStr = `${month}/${day}`;
-        
-        // 检查是否已经有相同的日期
-        if (dateMap.has(baseStr)) {
-          // 如果有重复，添加时间信息或序号
-          const count = dateMap.get(baseStr) + 1;
-          dateMap.set(baseStr, count);
-          
-          // 添加时间信息来区分
-          const hour = date.getHours();
-          const minute = date.getMinutes();
-          if (hour === 0 && minute === 0) {
-            // 如果是零点，使用序号
-            dates.push(`${baseStr}(${count})`);
-          } else {
-            // 否则显示时间
-            dates.push(`${baseStr} ${hour}:${minute.toString().padStart(2, '0')}`);
-          }
-        } else {
-          // 第一次出现这个日期
-          dateMap.set(baseStr, 1);
-          dates.push(baseStr);
-        }
+        return `${month}/${day}`;
       });
       
       const totalAssets = historyData.value.map(item => item.totalAssets);
