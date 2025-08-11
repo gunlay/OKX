@@ -91,18 +91,7 @@
           暂无资产数据
         </div>
         <div v-else class="chart-container">
-          <div class="pie-circle">
-            <div 
-              v-for="(asset, index) in filteredAssetDistribution" 
-              :key="asset.currency"
-              class="pie-segment" 
-              :style="{
-                '--percentage': `${asset.percentage}%`, 
-                '--color': getAssetColor(index),
-                '--start': `${getStartPercentage(index)}%`
-              }"
-            ></div>
-          </div>
+          <div class="pie-circle" :style="{ background: getPieBackground() }"></div>
           <div class="legend">
             <div 
               v-for="(asset, index) in filteredAssetDistribution" 
@@ -292,6 +281,27 @@ export default {
         start += this.filteredAssetDistribution[i].percentage;
       }
       return start;
+    },
+    
+    getPieBackground() {
+      if (!this.filteredAssetDistribution || this.filteredAssetDistribution.length === 0) {
+        return '#f5f5f5';
+      }
+      
+      let gradientStops = [];
+      let currentAngle = 0;
+      
+      this.filteredAssetDistribution.forEach((asset, index) => {
+        const color = this.getAssetColor(index);
+        const percentage = asset.percentage;
+        const startAngle = currentAngle;
+        const endAngle = currentAngle + (percentage / 100) * 360;
+        
+        gradientStops.push(`${color} ${startAngle}deg ${endAngle}deg`);
+        currentAngle = endAngle;
+      });
+      
+      return `conic-gradient(${gradientStops.join(', ')})`;
     },
     
     async fetchUsdtBalance() {
@@ -608,27 +618,6 @@ export default {
   overflow: hidden;
 }
 
-.pie-segment {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  clip-path: polygon(50% 50%, 50% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, 50% 0%);
-  transform: rotate(calc(var(--start) * 3.6deg));
-  transform-origin: center;
-}
-
-.pie-segment::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: var(--color);
-  clip-path: polygon(50% 50%, 50% 0%, calc(50% + 50% * cos(calc(var(--percentage) * 3.6deg - 90deg))), calc(50% + 50% * sin(calc(var(--percentage) * 3.6deg - 90deg))));
-}
 
 .legend {
   display: flex;
