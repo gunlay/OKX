@@ -143,10 +143,18 @@ export default {
       // 创建新图表
       chart.value = echarts.init(chartRef.value);
       
-      // 处理数据
+      // 处理数据 - 修复日期格式化问题
       const dates = historyData.value.map(item => {
+        // 确保正确解析日期字符串
         const date = new Date(item.date);
-        return `${date.getMonth() + 1}/${date.getDate()}`;
+        // 检查日期是否有效
+        if (isNaN(date.getTime())) {
+          console.warn('无效的日期:', item.date);
+          return '无效日期';
+        }
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+        return `${month}/${day}`;
       });
       
       const totalAssets = historyData.value.map(item => item.totalAssets);
@@ -187,7 +195,19 @@ export default {
           boundaryGap: false,
           data: dates,
           axisLabel: {
-            interval: Math.floor(dates.length / 7) // 根据数据量调整显示间隔
+            interval: function(index, value) {
+              // 根据数据量动态调整显示间隔
+              const totalPoints = dates.length;
+              if (totalPoints <= 7) {
+                return true; // 7个点以内全部显示
+              } else if (totalPoints <= 30) {
+                return index % Math.ceil(totalPoints / 7) === 0; // 显示约7个标签
+              } else {
+                return index % Math.ceil(totalPoints / 5) === 0; // 显示约5个标签
+              }
+            },
+            rotate: 0,
+            fontSize: 12
           }
         },
         yAxis: {
