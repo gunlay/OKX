@@ -614,10 +614,20 @@ export default {
   left: 0;
   width: 100%;
   height: 100%;
-  background: conic-gradient(
-    var(--color) var(--start) calc(var(--start) + var(--percentage)),
-    transparent calc(var(--start) + var(--percentage)) 100%
-  );
+  clip-path: polygon(50% 50%, 50% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, 50% 0%);
+  transform: rotate(calc(var(--start) * 3.6deg));
+  transform-origin: center;
+}
+
+.pie-segment::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--color);
+  clip-path: polygon(50% 50%, 50% 0%, calc(50% + 50% * cos(calc(var(--percentage) * 3.6deg - 90deg))), calc(50% + 50% * sin(calc(var(--percentage) * 3.6deg - 90deg))));
 }
 
 .legend {
