@@ -1597,17 +1597,21 @@ def get_asset_history(days: int = 30):
         end_date = today - timedelta(days=1)  # 昨天
         start_date = end_date - timedelta(days=days-1)  # 往前推days天
         
+        # 确保查询范围不包含今天
+        end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
+        start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE)
+        
         logger.info(f"查询资产历史数据: 从 {start_date} 到 {end_date}")
         
-        # 获取历史数据（只查询已存储的历史记录）
+        # 获取历史数据（只查询已存储的历史记录，严格排除今天）
         history_records = db.query(
             AssetHistory.recorded_at,
             AssetHistory.total_assets,
             AssetHistory.total_investment,
             AssetHistory.total_profit
         ).filter(
-            AssetHistory.recorded_at >= datetime.combine(start_date, datetime.min.time()).replace(tzinfo=TIMEZONE),
-            AssetHistory.recorded_at <= datetime.combine(end_date, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            AssetHistory.recorded_at >= start_datetime,
+            AssetHistory.recorded_at <= end_datetime
         ).order_by(AssetHistory.recorded_at.asc()).all()
         
         # 格式化结果
