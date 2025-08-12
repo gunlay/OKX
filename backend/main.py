@@ -1688,7 +1688,6 @@ def get_assets_overview(force_refresh: bool = False):
         return result
     
     except Exception as e:
-    except Exception as e:
         logger.exception(f"获取资产概览异常: {str(e)}")
         result = {
             "totalAssets": 0,
