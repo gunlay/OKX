@@ -64,10 +64,13 @@ export const assetApi = {
     return api.get('/assets/overview', { params });
   },
   // 获取资产历史数据
-  getHistory: (days = 30) => {
+  // 获取资产历史数据
+  getHistory: (days = 30, options = {}) => {
     return api.get('/assets/history', { 
       params: { days },
-      timeout: 20000  // 20秒超时
+      timeout: options.timeout || 15000,
+      signal: options.signal,
+      ...options
     });
   },
 };
