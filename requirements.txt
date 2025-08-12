@@ -1,8 +1,7 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 apscheduler
-pydantic
 cryptography
 pytz
-requests 
+requests

@@ -9,6 +9,14 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    assetsDir: 'assets'
+    assetsDir: 'assets',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'echarts': ['echarts']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000
   }
-}) 
+})

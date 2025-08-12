@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import time
-from fastapi.middleware.cors import CORSMiddleware
 import pytz
 
 # 导入自定义模块
@@ -612,13 +611,6 @@ def schedule_task(plan, check_missed=False):
     else:
         logger.error(f"任务 {plan.id} 调度失败，未找到对应的任务")
 
-# 打印所有调度任务
-def print_all_jobs():
-    jobs = scheduler.get_jobs()
-    logger.info(f"当前共有 {len(jobs)} 个调度任务:")
-    for job in jobs:
-        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "未调度"
-        logger.info(f"任务ID: {job.id}, 下次执行时间: {next_run}, 触发器: {job.trigger}")
 
 # 初始化所有任务的调度
 def init_scheduler():
@@ -629,8 +621,6 @@ def init_scheduler():
         for plan in plans:
             schedule_task(plan)
         logger.info(f"成功调度 {len(plans)} 个定投任务")
-        # 打印所有调度任务
-        print_all_jobs()
     except Exception as e:
         logger.exception(f"初始化定时任务异常: {str(e)}")
     finally:
@@ -870,54 +860,6 @@ def startup_event():
     except Exception as e:
         logger.exception(f"启动时记录资产数据异常: {str(e)}")
 
-# 添加调试接口
-@app.get("/api/debug/status")
-def get_debug_status():
-    """获取系统调试状态信息"""
-    db = next(get_db())
-    
-    try:
-        # 检查API配置
-        config = db.query(UserConfig).first()
-        has_config = bool(config)
-        
-        # 检查交易记录
-        total_transactions = db.query(Transaction).count()
-        success_transactions = db.query(Transaction).filter(Transaction.status == "success").count()
-        
-        # 检查定投计划
-        total_plans = db.query(DCAPlan).count()
-        enabled_plans = db.query(DCAPlan).filter(DCAPlan.status == "enabled").count()
-        
-        # 检查最近的交易记录
-        recent_transactions = db.query(Transaction).order_by(Transaction.executed_at.desc()).limit(5).all()
-        recent_tx_info = []
-        for tx in recent_transactions:
-            recent_tx_info.append({
-                "id": tx.id,
-                "symbol": tx.symbol,
-                "direction": tx.direction,
-                "amount": tx.amount,
-                "status": tx.status,
-                "executed_at": tx.executed_at.isoformat()
-            })
-        
-        return {
-            "has_api_config": has_config,
-            "total_transactions": total_transactions,
-            "success_transactions": success_transactions,
-            "total_plans": total_plans,
-            "enabled_plans": enabled_plans,
-            "recent_transactions": recent_tx_info,
-            "cache_status": {
-                "has_cache": bool(assets_cache["data"]),
-                "cache_timestamp": assets_cache["timestamp"],
-                "cache_age_seconds": time.time() - assets_cache["timestamp"] if assets_cache["timestamp"] else 0
-            }
-        }
-    except Exception as e:
-        logger.exception(f"获取调试状态异常: {str(e)}")
-        return {"error": str(e)}
 
 # 添加手动执行任务接口
 @app.post("/api/dca-plan/{plan_id}/execute")
@@ -947,9 +889,6 @@ def create_dca_plan(plan: DCAPlanCreate):
     # 调度任务
     schedule_task(db_plan)
     logger.info(f"创建新任务: {db_plan.id}, 币种: {db_plan.symbol}, 金额: {db_plan.amount}, 频率: {db_plan.frequency}")
-    
-    # 打印所有调度任务
-    print_all_jobs()
     
     return db_plan
 
@@ -997,9 +936,6 @@ def update_dca_plan(plan_id: int, plan: DCAPlanCreate):
     # 更新调度，如果时间设置有变化，则检查是否需要立即执行
     schedule_task(db_plan, check_missed=time_changed)
     
-    # 打印所有调度任务
-    print_all_jobs()
-    
     return db_plan
 
 @app.delete("/api/dca-plan/{plan_id}")
@@ -1032,9 +968,6 @@ def delete_dca_plan(plan_id: int):
     db.delete(db_plan)
     db.commit()
     
-    # 打印所有调度任务
-    print_all_jobs()
-    
     return {"ok": True}
 
 @app.put("/api/dca-plan/{plan_id}/status")
@@ -1053,9 +986,6 @@ def update_plan_status(plan_id: int, status: str = Body(..., embed=True)):
     
     # 更新调度
     schedule_task(db_plan)
-    
-    # 打印所有调度任务
-    print_all_jobs()
     
     return {"id": plan_id, "status": status}
 
@@ -1528,57 +1458,6 @@ def calculate_dca_assets_and_investment(db, client):
     logger.info(f"资产计算完成: 总资产={total_assets}, 资产列表={assets}")
     return total_assets, assets, total_investment, None
 
-def calculate_total_investment(db):
-    """计算用户的总投入金额"""
-    # 获取所有成功的交易记录
-    transactions = db.query(Transaction).filter(Transaction.status == "success").all()
-    
-    total_investment = 0
-    
-    for tx in transactions:
-        try:
-            # 解析交易响应获取实际成交金额
-            if tx.response:
-                response_data = json.loads(tx.response)
-                
-                # 检查是否有成交详情
-                if 'fill_details' in response_data and response_data['fill_details']:
-                    fill_data = response_data['fill_details']
-                    
-                    # 对于买入交易，使用实际成交金额
-                    if tx.direction == "buy":
-                        if 'fillAmt' in fill_data and fill_data['fillAmt']:
-                            try:
-                                fill_amount = float(fill_data['fillAmt'])
-                                total_investment += fill_amount
-                                continue
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    # 对于卖出交易，使用实际成交金额，从总投入中减去
-                    elif tx.direction == "sell":
-                        if 'fillAmt' in fill_data and fill_data['fillAmt']:
-                            try:
-                                fill_amount = float(fill_data['fillAmt'])
-                                total_investment -= fill_amount
-                                continue
-                            except (ValueError, TypeError):
-                                pass
-            
-            # 如果无法从成交详情获取，则使用交易记录中的金额
-            if tx.direction == "buy":
-                total_investment += tx.amount
-            elif tx.direction == "sell":
-                total_investment -= tx.amount
-                
-        except (json.JSONDecodeError, KeyError) as e:
-            # 如果解析失败，使用交易记录中的金额
-            if tx.direction == "buy":
-                total_investment += tx.amount
-            elif tx.direction == "sell":
-                total_investment -= tx.amount
-    
-    return total_investment
 
 def calculate_asset_distribution(assets, total_assets):
     """计算资产分布百分比"""
@@ -1636,10 +1515,6 @@ def get_strategy_info(db):
             "executionCount": 0
         }
 
-def calculate_total_investment(db):
-    """此函数已被替换为calculate_dca_assets_and_investment，保留此函数签名以避免引用错误"""
-    logger.warning("calculate_total_investment函数已被弃用，请使用calculate_dca_assets_and_investment")
-    return 0
 
 @app.get("/api/account/usdt-balance")
 def get_usdt_balance():
