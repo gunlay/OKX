@@ -63,11 +63,11 @@ export const assetApi = {
     const params = forceRefresh ? { force_refresh: true } : {};
     return api.get('/assets/overview', { params });
   },
-  // 获取资产历史数据 - 优化超时时间
-  getHistory: (days = 30, includeMetrics = false) => {
+  // 获取资产历史数据
+  getHistory: (days = 30) => {
     return api.get('/assets/history', { 
-      params: { days, include_metrics: includeMetrics },
-      timeout: 15000  // 15秒超时，比默认30秒更快失败
+      params: { days },
+      timeout: 20000  // 20秒超时
     });
   },
 };

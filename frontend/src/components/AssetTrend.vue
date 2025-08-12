@@ -14,26 +14,6 @@
       </div>
     </div>
     
-    <!-- 风险指标 -->
-    <div v-if="hasData && (riskMetrics.maxDrawdown > 0 || riskMetrics.volatility > 0 || riskMetrics.sharpeRatio)" class="risk-metrics">
-      <div class="metric-item">
-        <span class="metric-label">最大回撤:</span>
-        <span class="metric-value">{{ formatPercentage(riskMetrics.maxDrawdown) }}</span>
-        <span class="metric-tooltip" title="最大回撤是指投资组合从峰值到谷值的最大跌幅，是衡量投资风险的重要指标">ℹ️</span>
-      </div>
-      <div class="metric-item">
-        <span class="metric-label">年化波动率:</span>
-        <span class="metric-value">{{ formatPercentage(riskMetrics.volatility) }}</span>
-        <span class="metric-tooltip" title="波动率是衡量资产价格变化幅度的指标，数值越大表示价格波动越剧烈">ℹ️</span>
-      </div>
-      <div class="metric-item" v-if="riskMetrics.sharpeRatio !== undefined">
-        <span class="metric-label">夏普比率:</span>
-        <span class="metric-value" :class="{ 'positive': riskMetrics.sharpeRatio > 0, 'negative': riskMetrics.sharpeRatio < 0 }">
-          {{ riskMetrics.sharpeRatio.toFixed(2) }}
-        </span>
-        <span class="metric-tooltip" title="夏普比率表示每单位风险所获得的超额收益，数值越高表示风险调整后的收益越好">ℹ️</span>
-      </div>
-    </div>
     <div class="chart-container">
       <div v-if="loading" class="loading-spinner"></div>
       <div v-else-if="error" class="error-message">{{ error }}</div>
@@ -92,13 +72,6 @@ export default {
       { label: '全部', value: 365 }
     ];
     
-    // 风险指标数据
-    const riskMetrics = ref({
-      maxDrawdown: 0,
-      volatility: 0,
-      sharpeRatio: 0
-    });
-    
     // 生成指定天数的日期数组
     const generateDateRange = (days) => {
       const dates = [];
@@ -124,7 +97,7 @@ export default {
         error.value = '';
         
         // 检查缓存
-        const cacheKey = `history_${days}_${true}`;
+        const cacheKey = `history_${days}`;
         const now = Date.now();
         
         if (dataCache.has(cacheKey)) {
@@ -132,7 +105,6 @@ export default {
           if (now - cached.timestamp < cacheTimeout) {
             console.log('使用缓存的资产历史数据:', cacheKey);
             historyData.value = cached.historyData;
-            riskMetrics.value = cached.riskMetrics;
             hasData.value = cached.hasData;
             
             nextTick(() => {
@@ -143,19 +115,8 @@ export default {
           }
         }
         
-        const response = await assetApi.getHistory(days, true); // 请求包含风险指标的数据
-        
-        let rawData = [];
-        let metrics = { maxDrawdown: 0, volatility: 0, sharpeRatio: 0 };
-        
-        if (response.data.history) {
-          // 新的API格式，包含历史数据和风险指标
-          rawData = response.data.history;
-          metrics = response.data.metrics || metrics;
-        } else {
-          // 旧的API格式，只有历史数据
-          rawData = response.data;
-        }
+        const response = await assetApi.getHistory(days);
+        const rawData = response.data || [];
         
         // 生成完整的日期范围
         const dateRange = generateDateRange(days);
@@ -186,14 +147,12 @@ export default {
         });
         
         historyData.value = processedData;
-        riskMetrics.value = metrics;
-        hasData.value = true; // 总是有数据，因为我们填充了0值
+        hasData.value = processedData.length > 0;
         
         // 缓存数据
         dataCache.set(cacheKey, {
           historyData: processedData,
-          riskMetrics: metrics,
-          hasData: true,
+          hasData: processedData.length > 0,
           timestamp: now
         });
         
@@ -208,19 +167,27 @@ export default {
         });
       } catch (err) {
         console.error('获取资产历史数据失败:', err);
-        let errorMessage = '获取资产历史数据失败';
+        let errorMessage = '数据加载失败';
         
-        if (err.code === 'ECONNABORTED') {
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
           errorMessage = '请求超时，数据加载较慢，请稍后重试';
         } else if (err.response) {
-          errorMessage += ': ' + (err.response.data?.detail || err.response.statusText || '服务器错误');
+          const status = err.response.status;
+          if (status === 500) {
+            errorMessage = '服务器处理异常，请稍后重试';
+          } else if (status === 404) {
+            errorMessage = '暂无历史数据';
+          } else {
+            errorMessage = err.response.data?.detail || err.response.statusText || '服务器错误';
+          }
         } else if (err.request) {
-          errorMessage += ': 无法连接到服务器';
+          errorMessage = '无法连接到服务器，请检查网络连接';
         } else {
-          errorMessage += ': ' + err.message;
+          errorMessage = err.message || '未知错误';
         }
         
         error.value = errorMessage;
+        hasData.value = false;
       } finally {
         loading.value = false;
       }
@@ -404,12 +371,6 @@ export default {
       fetchHistoryData(selectedPeriod.value);
     });
     
-    // 格式化百分比
-    const formatPercentage = (value) => {
-      if (!value && value !== 0) return '0.00%';
-      return `${(value * 100).toFixed(2)}%`;
-    };
-    
     return {
       chartRef,
       loading,
@@ -417,9 +378,7 @@ export default {
       selectedPeriod,
       periods,
       hasData,
-      riskMetrics,
-      changePeriod,
-      formatPercentage
+      changePeriod
     };
   }
 }
@@ -513,43 +472,5 @@ export default {
   color: #999;
   text-align: center;
   padding: 20px;
-}
-
-.risk-metrics {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 15px;
-  padding: 10px 15px;
-  background-color: #f9f9f9;
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-.metric-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.metric-label {
-  color: #666;
-}
-
-.metric-value {
-  font-weight: 600;
-  color: #333;
-}
-
-.metric-tooltip {
-  cursor: help;
-  color: #1890ff;
-}
-
-.positive {
-  color: #52c41a;
-}
-
-.negative {
-  color: #ff4d4f;
 }
 </style>

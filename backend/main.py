@@ -740,17 +740,17 @@ history_cache = {
 }
 
 @app.get("/api/assets/history")
-def get_asset_history(days: int = 30, include_metrics: bool = False):
-    """获取指定天数的资产历史数据，可选择是否包含风险指标"""
+def get_asset_history(days: int = 30):
+    """获取指定天数的资产历史数据"""
     global history_cache
     
     # 检查缓存
-    cache_key = f"{days}_{include_metrics}"
+    cache_key = f"{days}"
     current_time = time.time()
     
     if (cache_key in history_cache["data"] and 
         current_time - history_cache["data"][cache_key]["timestamp"] < history_cache["ttl"]):
-        logger.info(f"从缓存返回资产历史数据: days={days}, include_metrics={include_metrics}")
+        logger.info(f"从缓存返回资产历史数据: days={days}")
         return history_cache["data"][cache_key]["data"]
     
     db = next(get_db())
@@ -760,13 +760,12 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
         end_date = datetime.now(TIMEZONE)
         start_date = end_date - timedelta(days=days)
         
-        # 优化查询：只查询需要的字段，减少数据传输
+        # 查询历史数据
         history_records = db.query(
             AssetHistory.recorded_at,
             AssetHistory.total_assets,
             AssetHistory.total_investment,
-            AssetHistory.total_profit,
-            AssetHistory.asset_distribution
+            AssetHistory.total_profit
         ).filter(
             AssetHistory.recorded_at >= start_date,
             AssetHistory.recorded_at <= end_date
@@ -779,71 +778,21 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
                 "date": record.recorded_at.isoformat(),
                 "totalAssets": record.total_assets,
                 "totalInvestment": record.total_investment,
-                "totalProfit": record.total_profit,
-                "assetDistribution": json.loads(record.asset_distribution) if record.asset_distribution else []
+                "totalProfit": record.total_profit
             })
-        
-        # 如果需要包含风险指标且有数据
-        response_data = result
-        if include_metrics and result and len(result) > 1:
-            try:
-                # 只计算必要的风险指标，优化计算性能
-                values = [record["totalAssets"] for record in result]
-                
-                # 计算最大回撤（优化版本）
-                max_drawdown = 0
-                peak = values[0]
-                for value in values:
-                    if value > peak:
-                        peak = value
-                    elif peak > 0:
-                        drawdown = (peak - value) / peak
-                        max_drawdown = max(max_drawdown, drawdown)
-                
-                # 计算波动率（简化版本）
-                volatility = 0
-                if len(values) > 1:
-                    returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
-                            for i in range(1, len(values))]
-                    
-                    if returns:
-                        mean_return = sum(returns) / len(returns)
-                        variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
-                        volatility = (variance ** 0.5) * (252 ** 0.5)  # 年化波动率
-                
-                # 简化夏普比率计算
-                sharpe_ratio = 0
-                if volatility > 0 and len(returns) > 0:
-                    avg_return = sum(returns) / len(returns)
-                    daily_risk_free = 0.02 / 252  # 2%年化无风险利率
-                    sharpe_ratio = (avg_return - daily_risk_free) / (volatility / (252 ** 0.5))
-                    sharpe_ratio = sharpe_ratio * (252 ** 0.5)  # 年化
-                
-                response_data = {
-                    "history": result,
-                    "metrics": {
-                        "maxDrawdown": max_drawdown,
-                        "volatility": volatility,
-                        "sharpeRatio": sharpe_ratio
-                    }
-                }
-            except Exception as e:
-                logger.warning(f"计算风险指标异常: {str(e)}")
-                # 如果计算失败，返回基础数据
-                response_data = result
         
         # 缓存结果
         history_cache["data"][cache_key] = {
-            "data": response_data,
+            "data": result,
             "timestamp": current_time
         }
         
-        logger.info(f"资产历史数据查询完成: days={days}, records={len(result)}, include_metrics={include_metrics}")
-        return response_data
+        logger.info(f"资产历史数据查询完成: days={days}, records={len(result)}")
+        return result
         
     except Exception as e:
         logger.exception(f"获取资产历史数据异常: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取资产历史数据失败: {str(e)}")
+        return []
 
 # 启动时初始化调度器
 @app.on_event("startup")
