@@ -113,19 +113,45 @@ export default {
       return dates;
     };
     
+    // 数据缓存
+    const dataCache = new Map();
+    const cacheTimeout = 3 * 60 * 1000; // 3分钟缓存
+    
     // 获取历史数据
     const fetchHistoryData = async (days) => {
       try {
         loading.value = true;
         error.value = '';
         
+        // 检查缓存
+        const cacheKey = `history_${days}_${true}`;
+        const now = Date.now();
+        
+        if (dataCache.has(cacheKey)) {
+          const cached = dataCache.get(cacheKey);
+          if (now - cached.timestamp < cacheTimeout) {
+            console.log('使用缓存的资产历史数据:', cacheKey);
+            historyData.value = cached.historyData;
+            riskMetrics.value = cached.riskMetrics;
+            hasData.value = cached.hasData;
+            
+            nextTick(() => {
+              initChart();
+            });
+            loading.value = false;
+            return;
+          }
+        }
+        
         const response = await assetApi.getHistory(days, true); // 请求包含风险指标的数据
         
         let rawData = [];
+        let metrics = { maxDrawdown: 0, volatility: 0, sharpeRatio: 0 };
+        
         if (response.data.history) {
           // 新的API格式，包含历史数据和风险指标
           rawData = response.data.history;
-          riskMetrics.value = response.data.metrics || { maxDrawdown: 0, volatility: 0 };
+          metrics = response.data.metrics || metrics;
         } else {
           // 旧的API格式，只有历史数据
           rawData = response.data;
@@ -143,7 +169,7 @@ export default {
         });
         
         // 填充完整的数据数组
-        historyData.value = dateRange.map(date => {
+        const processedData = dateRange.map(date => {
           const dateKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
           
           if (dataMap.has(dateKey)) {
@@ -159,14 +185,42 @@ export default {
           }
         });
         
+        historyData.value = processedData;
+        riskMetrics.value = metrics;
         hasData.value = true; // 总是有数据，因为我们填充了0值
+        
+        // 缓存数据
+        dataCache.set(cacheKey, {
+          historyData: processedData,
+          riskMetrics: metrics,
+          hasData: true,
+          timestamp: now
+        });
+        
+        // 限制缓存大小
+        if (dataCache.size > 10) {
+          const firstKey = dataCache.keys().next().value;
+          dataCache.delete(firstKey);
+        }
         
         nextTick(() => {
           initChart();
         });
       } catch (err) {
         console.error('获取资产历史数据失败:', err);
-        error.value = '获取资产历史数据失败: ' + (err.response?.data?.detail || err.message);
+        let errorMessage = '获取资产历史数据失败';
+        
+        if (err.code === 'ECONNABORTED') {
+          errorMessage = '请求超时，数据加载较慢，请稍后重试';
+        } else if (err.response) {
+          errorMessage += ': ' + (err.response.data?.detail || err.response.statusText || '服务器错误');
+        } else if (err.request) {
+          errorMessage += ': 无法连接到服务器';
+        } else {
+          errorMessage += ': ' + err.message;
+        }
+        
+        error.value = errorMessage;
       } finally {
         loading.value = false;
       }

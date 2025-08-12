@@ -743,9 +743,26 @@ def calculate_sharpe_ratio(result, risk_free_rate=0.02):
         logger.warning(f"计算夏普比率异常: {str(e)}")
         return 0
 
+# 资产历史数据缓存
+history_cache = {
+    "data": {},  # 按天数缓存: {days: {data: result, timestamp: time}}
+    "ttl": 180   # 缓存3分钟
+}
+
 @app.get("/api/assets/history")
 def get_asset_history(days: int = 30, include_metrics: bool = False):
     """获取指定天数的资产历史数据，可选择是否包含风险指标"""
+    global history_cache
+    
+    # 检查缓存
+    cache_key = f"{days}_{include_metrics}"
+    current_time = time.time()
+    
+    if (cache_key in history_cache["data"] and 
+        current_time - history_cache["data"][cache_key]["timestamp"] < history_cache["ttl"]):
+        logger.info(f"从缓存返回资产历史数据: days={days}, include_metrics={include_metrics}")
+        return history_cache["data"][cache_key]["data"]
+    
     db = next(get_db())
     
     try:
@@ -753,8 +770,14 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
         end_date = datetime.now(TIMEZONE)
         start_date = end_date - timedelta(days=days)
         
-        # 查询历史数据
-        history_records = db.query(AssetHistory).filter(
+        # 优化查询：只查询需要的字段，减少数据传输
+        history_records = db.query(
+            AssetHistory.recorded_at,
+            AssetHistory.total_assets,
+            AssetHistory.total_investment,
+            AssetHistory.total_profit,
+            AssetHistory.asset_distribution
+        ).filter(
             AssetHistory.recorded_at >= start_date,
             AssetHistory.recorded_at <= end_date
         ).order_by(AssetHistory.recorded_at.asc()).all()
@@ -770,45 +793,64 @@ def get_asset_history(days: int = 30, include_metrics: bool = False):
                 "assetDistribution": json.loads(record.asset_distribution) if record.asset_distribution else []
             })
         
-        # 如果需要包含风险指标
-        if include_metrics and result:
-            # 计算最大回撤
-            max_drawdown = calculate_max_drawdown(result)
-            
-            # 计算波动率（标准差）
-            volatility = 0
-            if len(result) > 1:
+        # 如果需要包含风险指标且有数据
+        response_data = result
+        if include_metrics and result and len(result) > 1:
+            try:
+                # 只计算必要的风险指标，优化计算性能
                 values = [record["totalAssets"] for record in result]
+                
+                # 计算最大回撤（优化版本）
+                max_drawdown = 0
+                peak = values[0]
+                for value in values:
+                    if value > peak:
+                        peak = value
+                    elif peak > 0:
+                        drawdown = (peak - value) / peak
+                        max_drawdown = max(max_drawdown, drawdown)
+                
+                # 计算波动率（简化版本）
+                volatility = 0
                 if len(values) > 1:
-                    try:
-                        # 计算日收益率
-                        returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
-                                for i in range(1, len(values))]
-                        
-                        if returns:
-                            # 计算标准差（不使用numpy）
-                            mean_return = sum(returns) / len(returns)
-                            variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
-                            volatility = variance ** 0.5
-                            # 年化波动率（假设252个交易日）
-                            volatility = volatility * (252 ** 0.5)
-                    except Exception as e:
-                        logger.warning(f"计算波动率异常: {str(e)}")
-            
-            # 计算夏普比率
-            sharpe_ratio = calculate_sharpe_ratio(result)
-            
-            # 添加风险指标到返回结果
-            return {
-                "history": result,
-                "metrics": {
-                    "maxDrawdown": max_drawdown,
-                    "volatility": volatility,
-                    "sharpeRatio": sharpe_ratio
+                    returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
+                            for i in range(1, len(values))]
+                    
+                    if returns:
+                        mean_return = sum(returns) / len(returns)
+                        variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
+                        volatility = (variance ** 0.5) * (252 ** 0.5)  # 年化波动率
+                
+                # 简化夏普比率计算
+                sharpe_ratio = 0
+                if volatility > 0 and len(returns) > 0:
+                    avg_return = sum(returns) / len(returns)
+                    daily_risk_free = 0.02 / 252  # 2%年化无风险利率
+                    sharpe_ratio = (avg_return - daily_risk_free) / (volatility / (252 ** 0.5))
+                    sharpe_ratio = sharpe_ratio * (252 ** 0.5)  # 年化
+                
+                response_data = {
+                    "history": result,
+                    "metrics": {
+                        "maxDrawdown": max_drawdown,
+                        "volatility": volatility,
+                        "sharpeRatio": sharpe_ratio
+                    }
                 }
-            }
+            except Exception as e:
+                logger.warning(f"计算风险指标异常: {str(e)}")
+                # 如果计算失败，返回基础数据
+                response_data = result
         
-        return result
+        # 缓存结果
+        history_cache["data"][cache_key] = {
+            "data": response_data,
+            "timestamp": current_time
+        }
+        
+        logger.info(f"资产历史数据查询完成: days={days}, records={len(result)}, include_metrics={include_metrics}")
+        return response_data
+        
     except Exception as e:
         logger.exception(f"获取资产历史数据异常: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取资产历史数据失败: {str(e)}")
