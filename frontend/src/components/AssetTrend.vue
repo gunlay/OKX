@@ -68,14 +68,16 @@ export default {
       { label: '全部', value: 365 }
     ];
     
-    // 生成指定天数的日期数组
+    // 生成指定天数的日期数组（不包含今天，只到昨天）
     const generateDateRange = (days) => {
       const dates = [];
       const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1); // 从昨天开始
       
       for (let i = days - 1; i >= 0; i--) {
-        const date = new Date(today);
-        date.setDate(today.getDate() - i);
+        const date = new Date(yesterday);
+        date.setDate(yesterday.getDate() - i);
         dates.push(date);
       }
       
