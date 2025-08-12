@@ -1688,14 +1688,18 @@ def get_assets_overview(force_refresh: bool = False):
         passphrase = decrypt_text(config.passphrase)
         
         if not api_key or not secret_key or not passphrase:
-            return {
+            result = {
                 "totalAssets": 0,
                 "totalInvestment": 0,
                 "totalProfit": 0,
                 "assetDistribution": [],
-                "error": "API配置不完整",
+                "error": "API配置不完整，请在配置中心完善OKX API密钥信息",
                 "lastUpdated": datetime.now(TIMEZONE).isoformat()
             }
+            # 缓存错误结果，避免频繁重试
+            assets_cache["data"] = result
+            assets_cache["timestamp"] = current_time
+            return result
         
         # 创建OKX客户端
         client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
@@ -1767,8 +1771,9 @@ def get_assets_overview(force_refresh: bool = False):
         return result
     
     except Exception as e:
+    except Exception as e:
         logger.exception(f"获取资产概览异常: {str(e)}")
-        return {
+        result = {
             "totalAssets": 0,
             "totalInvestment": 0,
             "totalProfit": 0,
@@ -1776,3 +1781,7 @@ def get_assets_overview(force_refresh: bool = False):
             "error": f"服务器异常: {str(e)}",
             "lastUpdated": datetime.now(TIMEZONE).isoformat()
         }
+        # 缓存错误结果，避免频繁重试
+        assets_cache["data"] = result
+        assets_cache["timestamp"] = current_time
+        return result

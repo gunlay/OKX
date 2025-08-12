@@ -216,7 +216,27 @@ export default {
         }
       } catch (error) {
         console.error('获取资产数据失败:', error);
-        this.error = '获取资产数据失败: ' + (error.response?.data?.detail || error.message);
+        // 优化错误信息显示
+        let errorMessage = '获取资产数据失败';
+        if (error.response) {
+          // 服务器返回了错误响应
+          if (error.response.data?.error) {
+            errorMessage += ': ' + error.response.data.error;
+          } else if (error.response.data?.detail) {
+            errorMessage += ': ' + error.response.data.detail;
+          } else if (error.response.status === 404) {
+            errorMessage += ': API接口未找到，请检查后端服务是否正常运行';
+          } else {
+            errorMessage += ': ' + (error.response.statusText || '服务器错误');
+          }
+        } else if (error.request) {
+          // 请求发出但没有收到响应
+          errorMessage += ': 无法连接到服务器，请检查网络连接';
+        } else {
+          // 其他错误
+          errorMessage += ': ' + error.message;
+        }
+        this.error = errorMessage;
       } finally {
         this.loading = false;
         this.refreshing = false;
