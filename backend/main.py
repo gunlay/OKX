@@ -17,6 +17,7 @@ import pytz
 # 导入自定义模块
 from models import Base, UserConfig, DCAPlan, Transaction, AssetHistory, encrypt_text, decrypt_text
 from okx_api import OKXClient, get_popular_coins_public
+from proxy_api import OKXProxyClient
 
 # 配置日志
 log_dir = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +59,71 @@ lock = threading.Lock()
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
+
+# 环境检测：判断是否为本地开发环境
+def is_local_environment():
+    """检测是否为本地开发环境"""
+    import os
+    
+    # 优先检查环境变量
+    env_setting = os.getenv('ENVIRONMENT', '').lower()
+    if env_setting == 'local':
+        return True
+    elif env_setting == 'production':
+        return False
+    
+    # 如果没有设置环境变量，则通过网络信息判断
+    import socket
+    try:
+        # 获取本机IP
+        hostname = socket.gethostname()
+        
+        # 检查主机名
+        if hostname.lower() in ['localhost', 'local'] or 'local' in hostname.lower():
+            return True
+        
+        try:
+            local_ip = socket.gethostbyname(hostname)
+            # 检查是否为本地IP或开发环境
+            if (local_ip.startswith('192.168.') or 
+                local_ip.startswith('10.') or 
+                local_ip.startswith('172.') or
+                local_ip == '127.0.0.1'):
+                return True
+        except socket.gaierror:
+            # 如果无法解析主机名，可能是本地环境
+            pass
+        
+        # 检查是否在AWS服务器上（通过IP判断）
+        # AWS服务器的公网IP是 13.158.74.102
+        try:
+            # 获取外网IP的方法
+            import urllib.request
+            with urllib.request.urlopen('http://httpbin.org/ip', timeout=5) as response:
+                import json
+                data = json.loads(response.read().decode())
+                external_ip = data.get('origin', '')
+                if external_ip == '13.158.74.102':
+                    return False  # 这是AWS服务器
+        except Exception:
+            pass
+            
+        # 默认认为是本地环境（更安全的选择）
+        return True
+        
+    except Exception:
+        # 如果出现异常，默认认为是本地环境
+        return True
+
+# 创建OKX客户端的工厂函数
+def create_okx_client(api_key: str, secret_key: str, passphrase: str):
+    """根据环境创建合适的OKX客户端"""
+    if is_local_environment():
+        logger.info("检测到本地环境，使用代理客户端")
+        return OKXProxyClient(api_key, secret_key, passphrase)
+    else:
+        logger.info("检测到生产环境，使用直连客户端")
+        return OKXClient(api_key, secret_key, passphrase)
 
 # Pydantic 模型
 class DCAPlanCreate(BaseModel):
@@ -152,7 +218,7 @@ def execute_dca_task(plan_id: int):
                 return
             
             # 创建OKX客户端
-            client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
+            client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
             
             # 执行交易
             side = "sell" if plan.direction == "sell" else "buy"
@@ -1180,7 +1246,7 @@ def get_popular_coins(limit: int = 100):
 def test_api_connection(config: ApiConfig = Body(...)):
     """测试 OKX API 连接，前端传递 ApiConfig 参数"""
     try:
-        client = OKXClient(
+        client = create_okx_client(
             api_key=config.api_key,
             secret_key=config.secret_key,
             passphrase=config.passphrase
@@ -1484,7 +1550,7 @@ def get_usdt_balance():
             return {"balance": 0, "error": "API配置不完整"}
         
         # 创建OKX客户端
-        client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
+        client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
         
         # 获取账户余额 - 使用正确的API调用
         balance_result = client.get_account_balance()
@@ -1568,7 +1634,7 @@ def get_assets_overview(force_refresh: bool = False):
             return result
         
         # 创建OKX客户端
-        client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
+        client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
         
         # 1. 计算定投策略的资产价值、投入和收益
         logger.info("开始计算定投策略资产数据")
@@ -1650,3 +1716,30 @@ def get_assets_overview(force_refresh: bool = False):
         assets_cache["data"] = result
         assets_cache["timestamp"] = current_time
         return result
+
+# 代理接口
+@app.post("/api/proxy/okx")
+def proxy_okx_request(request_data: dict):
+    """代理OKX API请求"""
+    try:
+        method = request_data.get('method')
+        endpoint = request_data.get('endpoint')
+        params = request_data.get('params', {})
+        data = request_data.get('data', {})
+        api_key = request_data.get('api_key')
+        secret_key = request_data.get('secret_key')
+        passphrase = request_data.get('passphrase')
+        
+        if not all([method, endpoint, api_key, secret_key, passphrase]):
+            return {"code": "ERROR", "msg": "缺少必要参数"}
+        
+        # 创建直连的OKX客户端（在服务器上）
+        client = OKXClient(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
+        
+        # 转发请求
+        result = client._request(method, endpoint, params, data)
+        return result
+        
+    except Exception as e:
+        logger.exception(f"代理请求异常: {str(e)}")
+        return {"code": "ERROR", "msg": f"代理请求失败: {str(e)}"}
