@@ -472,29 +472,43 @@ export default {
   }
   
   .info-row-group {
-    gap: 8px;
+    gap: 0;
+    justify-content: space-between;
   }
   
   .info-row {
     flex: none;
-    width: 48%;
+    width: 50%;
+    display: flex;
+    align-items: flex-start;
   }
   
   .info-row:first-child {
-    width: 52%;
+    padding-right: 5px;
+  }
+  
+  .info-row:last-child {
+    padding-left: 5px;
+    justify-content: flex-end;
+    text-align: right;
   }
   
   .label {
-    width: 50px;
-    font-size: 12px;
+    width: auto;
+    font-size: 13px;
     flex-shrink: 0;
+    margin-right: 4px;
   }
   
   .value {
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 13px;
+    flex: 1;
+    word-wrap: break-word;
+    white-space: normal;
+  }
+  
+  .info-row:last-child .value {
+    text-align: right;
   }
 }
 </style>
