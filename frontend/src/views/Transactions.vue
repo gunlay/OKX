@@ -393,7 +393,7 @@ export default {
   color: #666;
   font-size: 0.875rem;
   flex-shrink: 0;
-  margin-right: 0.25rem;
+  margin-right: 0.125rem;
 }
 
 .value {
@@ -490,7 +490,7 @@ export default {
     min-width: 4rem;
     max-width: 5rem;
     font-size: 0.8125rem;
-    margin-right: 0.5rem;
+    margin-right: 0.25rem;
   }
   
   .value {
@@ -513,7 +513,7 @@ export default {
     min-width: 3.5rem;
     max-width: 4.5rem;
     font-size: 0.75rem;
-    margin-right: 0.25rem;
+    margin-right: 0.125rem;
   }
   
   .value {
@@ -531,6 +531,7 @@ export default {
     min-width: 5rem;
     max-width: 6rem;
     font-size: 0.875rem;
+    margin-right: 0.125rem;
   }
   
   .value {
