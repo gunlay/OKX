@@ -371,8 +371,9 @@ export default {
 
 .info-row-group {
   display: flex;
-  gap: 20px;
-  margin-bottom: 8px;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  align-items: flex-start;
 }
 
 .info-row-group:last-child {
@@ -383,20 +384,24 @@ export default {
   display: flex;
   flex: 1;
   min-width: 0;
+  align-items: flex-start;
 }
 
 .label {
-  width: 70px;
+  min-width: 4.5rem;
+  max-width: 5.5rem;
   color: #666;
-  font-size: 14px;
+  font-size: 0.875rem;
   flex-shrink: 0;
+  margin-right: 0.25rem;
 }
 
 .value {
   color: #333;
-  font-size: 14px;
+  font-size: 0.875rem;
   flex: 1;
-  word-break: break-all;
+  word-wrap: break-word;
+  line-height: 1.3;
 }
 
 .value.success {
@@ -453,10 +458,10 @@ export default {
   font-size: 14px;
 }
 
-/* 移动端适配 */
-@media (max-width: 480px) {
+/* 移动端适配 - 针对iPhone15 Plus等大屏手机优化 */
+@media (max-width: 768px) {
   .transactions {
-    padding: 15px;
+    padding: 1rem;
   }
   
   .filter-row {
@@ -472,43 +477,64 @@ export default {
   }
   
   .info-row-group {
-    gap: 0;
-    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
   }
   
   .info-row {
-    flex: none;
-    width: 50%;
-    display: flex;
-    align-items: flex-start;
-  }
-  
-  .info-row:first-child {
-    padding-right: 5px;
-  }
-  
-  .info-row:last-child {
-    padding-left: 5px;
-    justify-content: flex-end;
-    text-align: right;
+    flex: 1;
+    min-width: 0;
   }
   
   .label {
-    width: auto;
-    font-size: 13px;
-    flex-shrink: 0;
-    margin-right: 4px;
+    min-width: 4rem;
+    max-width: 5rem;
+    font-size: 0.8125rem;
+    margin-right: 0.5rem;
   }
   
   .value {
-    font-size: 13px;
-    flex: 1;
-    word-wrap: break-word;
-    white-space: normal;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+}
+
+/* 针对更小屏幕的优化 */
+@media (max-width: 375px) {
+  .transactions {
+    padding: 0.75rem;
   }
   
-  .info-row:last-child .value {
-    text-align: right;
+  .info-row-group {
+    gap: 0.25rem;
+  }
+  
+  .label {
+    min-width: 3.5rem;
+    max-width: 4.5rem;
+    font-size: 0.75rem;
+    margin-right: 0.25rem;
+  }
+  
+  .value {
+    font-size: 0.75rem;
+  }
+}
+
+/* 针对大屏手机如iPhone15 Plus的优化 */
+@media (min-width: 414px) and (max-width: 768px) {
+  .info-row-group {
+    gap: 1.5rem;
+  }
+  
+  .label {
+    min-width: 5rem;
+    max-width: 6rem;
+    font-size: 0.875rem;
+  }
+  
+  .value {
+    font-size: 0.875rem;
   }
 }
 </style>
