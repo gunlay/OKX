@@ -472,16 +472,29 @@ export default {
   }
   
   .info-row-group {
-    gap: 15px;
+    gap: 8px;
+  }
+  
+  .info-row {
+    flex: none;
+    width: 48%;
+  }
+  
+  .info-row:first-child {
+    width: 52%;
   }
   
   .label {
-    width: 60px;
-    font-size: 13px;
+    width: 50px;
+    font-size: 12px;
+    flex-shrink: 0;
   }
   
   .value {
-    font-size: 13px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 </style>
