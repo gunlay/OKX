@@ -49,49 +49,57 @@
         
         <div class="transaction-content">
           <div class="transaction-info">
-            <div class="info-row">
-              <span class="label">任务标题:</span>
-              <span class="value">{{ transaction.plan_title || '未知任务' }}</span>
+            <div class="info-row-group">
+              <div class="info-row">
+                <span class="label">任务标题:</span>
+                <span class="value">{{ transaction.plan_title || '未知任务' }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">执行次数:</span>
+                <span class="value">第{{ transaction.execution_count }}次</span>
+              </div>
             </div>
-            <div class="info-row">
-              <span class="label">执行次数:</span>
-              <span class="value">第{{ transaction.execution_count }}次</span>
+            <div class="info-row-group">
+              <div class="info-row">
+                <span class="label">币种:</span>
+                <span class="value">{{ transaction.symbol }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">成交金额:</span>
+                <span class="value">${{ formatNumber(transaction.amount) }}</span>
+              </div>
             </div>
-            <div class="info-row">
-              <span class="label">币种:</span>
-              <span class="value">{{ transaction.symbol }}</span>
-            </div>
-            <div class="info-row">
-              <span class="label">成交金额:</span>
-              <span class="value">${{ formatNumber(transaction.amount) }}</span>
-            </div>
-            <div class="info-row">
-              <span class="label">成交价格:</span>
-              <span class="value">
-                <span v-if="transaction.trade_price">
-                  ${{ formatNumber(transaction.trade_price) }}
+            <div class="info-row-group">
+              <div class="info-row">
+                <span class="label">成交价格:</span>
+                <span class="value">
+                  <span v-if="transaction.trade_price">
+                    ${{ formatNumber(transaction.trade_price) }}
+                  </span>
+                  <span v-else>-</span>
                 </span>
-                <span v-else>-</span>
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="label">成交数量:</span>
-              <span class="value">
-                <span v-if="transaction.trade_quantity">
-                  {{ formatQuantity(transaction.trade_quantity) }}
+              </div>
+              <div class="info-row">
+                <span class="label">成交数量:</span>
+                <span class="value">
+                  <span v-if="transaction.trade_quantity">
+                    {{ formatQuantity(transaction.trade_quantity) }}
+                  </span>
+                  <span v-else>-</span>
                 </span>
-                <span v-else>-</span>
-              </span>
+              </div>
             </div>
-            <div class="info-row">
-              <span class="label">状态:</span>
-              <span class="value" :class="transaction.status">
-                {{ transaction.status === 'success' ? '成功' : '失败' }}
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="label">成交时间:</span>
-              <span class="value">{{ formatDate(transaction.executed_at) }}</span>
+            <div class="info-row-group">
+              <div class="info-row">
+                <span class="label">状态:</span>
+                <span class="value" :class="transaction.status">
+                  {{ transaction.status === 'success' ? '成功' : '失败' }}
+                </span>
+              </div>
+              <div class="info-row">
+                <span class="label">成交时间:</span>
+                <span class="value">{{ formatDate(transaction.executed_at) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -361,24 +369,34 @@ export default {
   flex: 1;
 }
 
-.info-row {
+.info-row-group {
   display: flex;
+  gap: 20px;
   margin-bottom: 8px;
 }
 
-.info-row:last-child {
+.info-row-group:last-child {
   margin-bottom: 0;
 }
 
+.info-row {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .label {
-  width: 80px;
+  width: 70px;
   color: #666;
   font-size: 14px;
+  flex-shrink: 0;
 }
 
 .value {
   color: #333;
   font-size: 14px;
+  flex: 1;
+  word-break: break-all;
 }
 
 .value.success {
@@ -451,6 +469,19 @@ export default {
   
   .transaction-content {
     flex-direction: column;
+  }
+  
+  .info-row-group {
+    gap: 15px;
+  }
+  
+  .label {
+    width: 60px;
+    font-size: 13px;
+  }
+  
+  .value {
+    font-size: 13px;
   }
 }
 </style>
