@@ -2310,6 +2310,76 @@ def get_strategy_info(db):
         }
 
 
+@app.get("/api/account/total-assets")
+def get_total_assets():
+    """获取OKX账户总资产"""
+    try:
+        # 检测环境并选择合适的客户端
+        if detect_environment() == 'local':
+            logger.info("检测到本地环境，使用代理客户端")
+            db = next(get_db())
+            api_config = get_api_config(db)
+            
+            if not api_config:
+                return {"totalAssets": 0, "error": "未配置API密钥"}
+            
+            try:
+                # 解密API密钥
+                decrypted_config = decrypt_api_config(api_config)
+                proxy_client = OKXProxyClient(
+                    api_key=decrypted_config['api_key'],
+                    secret_key=decrypted_config['secret_key'],
+                    passphrase=decrypted_config['passphrase']
+                )
+                result = proxy_client.get_account_balance()
+                logger.info(f"代理OKX账户余额API响应: {result}")
+            except Exception as e:
+                logger.error(f"API密钥解密失败: {str(e)}")
+                return {"totalAssets": 0, "error": "API密钥解密失败"}
+        else:
+            logger.info("检测到生产环境，使用直连客户端")
+            db = next(get_db())
+            api_config = get_api_config(db)
+            
+            if not api_config:
+                return {"totalAssets": 0, "error": "未配置API密钥"}
+            
+            try:
+                # 解密API密钥
+                decrypted_config = decrypt_api_config(api_config)
+                okx_client = OKXClient(
+                    api_key=decrypted_config['api_key'],
+                    secret_key=decrypted_config['secret_key'],
+                    passphrase=decrypted_config['passphrase']
+                )
+                result = okx_client.get_account_balance()
+                logger.info(f"OKX账户余额API响应: {result}")
+            except Exception as e:
+                logger.error(f"API密钥解密失败: {str(e)}")
+                return {"totalAssets": 0, "error": "API密钥解密失败"}
+        
+        # 检查API响应
+        if result.get('code') != '0':
+            error_msg = result.get('msg', '未知错误')
+            logger.error(f"OKX API错误: {error_msg}")
+            return {"totalAssets": 0, "error": f"OKX API错误: {error_msg}"}
+        
+        # 解析响应数据，获取totalEq
+        data = result.get('data', [])
+        if not data:
+            logger.warning("API返回空数据")
+            return {"totalAssets": 0}
+        
+        # 获取总资产价值 (totalEq字段)
+        total_assets = float(data[0].get('totalEq', 0))
+        
+        logger.info(f"获取总资产成功: {total_assets}")
+        return {"totalAssets": total_assets}
+        
+    except Exception as e:
+        logger.error(f"获取总资产异常: {str(e)}")
+        return {"totalAssets": 0, "error": f"获取总资产异常: {str(e)}"}
+
 @app.get("/api/account/usdt-balance")
 def get_usdt_balance():
     """获取OKX账户中的USDT余额"""
@@ -2358,8 +2428,27 @@ def get_usdt_balance():
                     except (ValueError, TypeError) as e:
                         logger.warning(f"解析USDT余额失败: {avail_bal}, 错误: {str(e)}")
         
-        logger.info(f"最终USDT余额: {usdt_balance}")
-        return {"balance": usdt_balance}
+        # 获取总资产 (totalEq字段)
+        total_assets = 0
+        for item in data:
+            total_eq = item.get('totalEq', '0')
+            try:
+                total_assets = float(total_eq)
+                logger.info(f"找到总资产: {total_assets}")
+                break
+            except (ValueError, TypeError):
+                logger.warning(f"无法解析总资产值: {total_eq}")
+        
+        logger.info(f"最终USDT余额: {usdt_balance}, 总资产: {total_assets}")
+        import json
+        result = {
+            "balance": float(usdt_balance),
+            "totalAssets": float(total_assets)
+        }
+        logger.info(f"返回结果JSON: {json.dumps(result)}")
+        return result
+        logger.info(f"返回结果: {result}")
+        return result
     
     except Exception as e:
         logger.exception(f"获取USDT余额异常: {str(e)}")

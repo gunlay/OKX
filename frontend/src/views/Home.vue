@@ -25,6 +25,14 @@
         </div>
         <div class="balance-content">
           <div class="balance-item">
+            <span class="balance-label">总资产:</span>
+            <span class="balance-value">
+              <span v-if="usdtLoading" class="loading-text">加载中...</span>
+              <span v-else-if="usdtBalance.error" class="error-text">{{ usdtBalance.error }}</span>
+              <span v-else class="amount">${{ formatNumber(usdtBalance.totalAssets || 0) }}</span>
+            </span>
+          </div>
+          <div class="balance-item">
             <span class="balance-label">可用USDT:</span>
             <span class="balance-value">
               <span v-if="usdtLoading" class="loading-text">加载中...</span>
@@ -152,6 +160,7 @@ export default {
       // USDT余额相关
       usdtBalance: {
         balance: 0,
+        totalAssets: 0,
         error: null
       },
       usdtLoading: false
@@ -346,12 +355,15 @@ export default {
           console.log('API返回错误:', data.error);
           this.usdtBalance.error = data.error;
           this.usdtBalance.balance = 0;
+          this.usdtBalance.totalAssets = 0;
         } else {
           const balance = data.balance || 0;
+          const totalAssets = data.totalAssets || 0;
           console.log('从API获取的余额:', balance);
+          console.log('从API获取的总资产:', totalAssets);
           this.usdtBalance.balance = balance;
-          console.log('设置到组件的USDT余额:', this.usdtBalance.balance);
-          console.log('当前usdtBalance对象:', this.usdtBalance);
+          this.usdtBalance.totalAssets = totalAssets;
+          console.log('设置到组件的数据:', this.usdtBalance);
         }
       } catch (error) {
         console.error('获取USDT余额失败 - 完整错误信息:', error);
