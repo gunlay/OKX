@@ -1,4 +1,4 @@
-# OKX定投系统架构设计与开发原则
+# OKX定投系统架构设计与开发指南
 
 ## 系统架构概述
 
@@ -76,29 +76,105 @@ npm run dev
 - 使用 `OKXProxyClient` 替代 `OKXClient`
 - 所有OKX API请求转发到线上服务器
 
-### 3. 环境自动检测
+## 本地开发环境设置
 
-系统会自动检测运行环境：
+### 快速开始
 
-```python
-def detect_environment():
-    # 1. 环境变量优先
-    env = os.getenv('ENVIRONMENT')
-    if env in ['local', 'production']:
-        return env
-    
-    # 2. 自动检测
-    hostname = socket.gethostname().lower()
-    if 'local' in hostname:
-        return 'local'
-    
-    # 3. IP地址检测
-    if is_aws_server_ip() or is_production_ip():
-        return 'production'
-    
-    # 4. 默认本地环境（安全选择）
-    return 'local'
+#### 1. 启动本地开发服务器
+
+```bash
+cd backend
+python3 start_local.py
 ```
+
+这个脚本会：
+- 自动设置环境变量 `ENVIRONMENT=local`
+- 配置代理服务器地址
+- 启动FastAPI开发服务器（支持热重载）
+
+#### 2. 手动启动（可选）
+
+如果你想手动控制环境变量：
+
+```bash
+cd backend
+export ENVIRONMENT=local
+python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### 环境检测逻辑
+
+系统按以下优先级检测环境：
+
+1. **环境变量优先**
+   - `ENVIRONMENT=local` → 本地环境
+   - `ENVIRONMENT=production` → 生产环境
+
+2. **自动检测**（当环境变量未设置时）
+   ```python
+   def detect_environment():
+       # 1. 环境变量优先
+       env = os.getenv('ENVIRONMENT')
+       if env in ['local', 'production']:
+           return env
+       
+       # 2. 自动检测
+       hostname = socket.gethostname().lower()
+       if 'local' in hostname:
+           return 'local'
+       
+       # 3. IP地址检测
+       if is_aws_server_ip() or is_production_ip():
+           return 'production'
+       
+       # 4. 默认本地环境（安全选择）
+       return 'local'
+   ```
+
+### 测试验证
+
+#### 1. 测试环境检测
+```bash
+cd backend
+python3 test_environment.py
+```
+
+#### 2. 测试API连接
+启动服务后，在浏览器中访问：
+```
+http://localhost:8000/api/debug/status
+```
+
+#### 3. 测试前端连接
+```bash
+cd frontend
+npm run dev
+```
+
+## 数据库设计
+
+### 核心表结构
+
+#### user_configs - 用户配置
+- API密钥配置（加密存储）
+- 选择的交易币种列表
+
+#### dca_plans - 定投计划
+- 任务标题、币种、金额
+- 执行频率、时间配置
+- 买入/卖出方向
+- 启用/禁用状态
+
+#### transactions - 交易记录
+- 关联的定投计划
+- 交易详情（币种、金额、方向）
+- 执行状态和API响应
+- 执行时间
+
+#### asset_history - 资产历史
+- 每日资产快照
+- 总资产、投入、收益
+- 资产分布数据
 
 ## 开发原则与约束
 
@@ -202,6 +278,34 @@ def detect_environment():
    - 检查API配置完整
    - 确认数据完整性
 
+## 核心特性
+
+### 1. 智能调度系统
+- 基于APScheduler的分布式任务调度
+- 支持任务失效恢复和重试机制
+- 时区感知（Asia/Shanghai）
+- 防重复执行保护
+
+### 2. 安全机制
+- API密钥Fernet加密存储
+- 请求签名验证
+- 错误处理和日志记录
+- 数据库事务保护
+
+### 3. 数据处理
+- 实时价格获取和缓存
+- 资产价值计算和历史记录
+- 收益率和风险指标计算
+- 交易数据解析和存储
+
+### 4. 用户体验
+- **移动端自适应设计**: 响应式布局，支持手机和平板访问
+- **实时数据刷新**: 支持手动刷新资产数据和USDT余额
+- **直观的图表展示**: ECharts图表展示资产趋势和分布
+- **友好的错误提示**: 详细的错误信息和加载状态提示
+- **独立余额显示**: OKX账户USDT余额独立显示，不计入定投策略资产
+- **便捷操作**: 刷新数据和退出按钮并排显示，操作更便捷
+
 ## 故障排除指南
 
 ### 常见问题
@@ -255,36 +359,24 @@ def detect_environment():
    - 重新配置API密钥
    - 验证功能完整性
 
-## 文件结构说明
+## 注意事项
 
-```
-OKX/
-├── ARCHITECTURE_GUIDE.md          # 本文档
-├── LOCAL_DEVELOPMENT.md           # 本地开发指南
-├── README.md                      # 项目说明
-├── requirements.txt               # Python依赖
-├── .gitignore                     # Git忽略规则
-├── backend/                       # 后端代码
-│   ├── main.py                   # 主服务文件（核心，谨慎修改）
-│   ├── okx_api.py               # OKX直连客户端
-│   ├── proxy_api.py             # OKX代理客户端
-│   ├── start_local.py           # 本地开发启动脚本
-│   ├── models.py                # 数据模型
-│   └── .env.example             # 环境变量示例
-└── frontend/                     # 前端代码
-    ├── src/
-    │   ├── api.js               # API配置（注意服务器地址）
-    │   ├── App.vue              # 主应用组件
-    │   ├── main.js              # 入口文件
-    │   ├── components/          # 可复用组件
-    │   └── views/               # 页面组件
-    ├── package.json             # 前端依赖
-    └── vite.config.js           # 构建配置
-```
+### OKX API 限制
+- 需要在OKX配置IP白名单
+- API调用频率限制
+- 市价单和限价单的不同处理逻辑
 
-## 重要提醒
+### 系统限制
+- 仅支持现货交易
+- 基于USDT计价
+- 需要足够的账户余额
 
-### 对开发者的提醒
+### 安全建议
+- 定期备份数据库
+- 监控API密钥安全
+- 关注交易异常情况
+
+## 对开发者的提醒
 
 1. **理解架构再动手**
    - 修改代码前必须完全理解现有架构
@@ -301,35 +393,10 @@ OKX/
    - 不要跳过任何环节
    - 保持代码和文档同步更新
 
-### 架构设计理念
-
-1. **安全第一**
-   - OKX API密钥只存储在线上服务器
-   - 本地开发通过代理访问，不直接接触敏感信息
-   - IP白名单机制确保API访问安全
-
-2. **开发友好**
-   - 本地开发体验与生产环境一致
-   - 自动环境检测，无需手动配置
-   - 热重载支持，提高开发效率
-
-3. **部署简单**
-   - 代码在本地和生产环境无差异
-   - 环境自动适配，无需修改配置
-   - 一键部署，减少人为错误
-
-## 版本历史
-
-- **v1.0** - 初始架构设计，实现基本功能
-- **v1.1** - 添加代理转发机制，支持本地开发
-- **v1.2** - 完善环境检测，优化开发体验
-- **v1.3** - 添加总资产显示功能
-- **v1.4** - 代码重构与架构文档完善
-
 ---
 
-**最后更新**: 2025年8月16日
+**最后更新**: 2025年8月26日
 **维护者**: CodeBuddy
-**文档版本**: v1.0
+**文档版本**: v1.1
 
 > ⚠️ **重要提醒**: 本文档是系统架构的核心指南，任何架构相关的修改都应该先更新此文档，确保团队成员了解变更内容。
