@@ -140,639 +140,9 @@ def get_db():
     finally:
         db.close()
 
-def check_existing_transaction(db, plan_id):
-    """检查今天是否已经执行过该任务"""
-    today = datetime.now().date()
-    query = db.query(Transaction).filter(
-        Transaction.plan_id == plan_id,
-        func.date(Transaction.created_at) == today
-    )
-    existing_transaction = query.first()
-    
-    if existing_transaction:
-        logger.info(f"任务 {plan_id} 在当前时间设置下今天已经执行过，跳过执行")
-        return True
-    return False
 
-def execute_dca_task(plan_id):
-    """执行DCA任务"""
-    db = SessionLocal()
-    try:
-        # 获取API配置
-        config = db.query(UserConfig).first()
-        if not config:
-            logger.error(f"任务 {plan_id} 执行失败: 未找到API配置")
-            return
-        
-        api_key = decrypt_text(config.api_key)
-        secret_key = decrypt_text(config.secret_key)
-        passphrase = decrypt_text(config.passphrase)
-        
-        if not api_key or not secret_key or not passphrase:
-            logger.error(f"任务 {plan_id} 执行失败: API配置不完整")
-            return
-        
-        # 创建OKX客户端
-        client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
-        
-        # 执行交易
-        side = "sell" if plan.direction == "sell" else "buy"
-        
-        # 对于卖出操作，需要先查询账户余额，获取可用的币种数量
-        if side == "sell":
-            # 获取币种信息，例如BTC-USDT中的BTC
-                base_currency = plan.symbol.split('-')[0]
-                balance_result = client.get_trading_balance()
-                
-                if balance_result.get('code') != '0':
-                    logger.error(f"任务 {plan_id} 获取账户余额失败: {balance_result.get('msg', '未知错误')}")
-                    # 记录失败交易
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction,
-                        status="failed",
-                        response=json.dumps({"error": f"获取账户余额失败: {balance_result.get('msg', '未知错误')}"}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                # 查找对应币种的可用余额
-                available_amount = 0
-                for item in balance_result.get('data', []):
-                    for balance in item.get('details', []):
-                        if balance.get('ccy') == base_currency:
-                            available_amount = float(balance.get('availBal', 0))
-                            break
-                
-                if available_amount <= 0:
-                    logger.error(f"任务 {plan_id} 卖出失败: {base_currency}余额不足")
-                    # 记录失败交易
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction,
-                        status="failed",
-                        response=json.dumps({"error": f"{base_currency}余额不足"}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                # 获取当前市场价格，计算可以卖出的数量
-                ticker_result = client.get_ticker(plan.symbol)
-                if ticker_result.get('code') != '0':
-                    logger.error(f"任务 {plan_id} 获取市场价格失败: {ticker_result.get('msg', '未知错误')}")
-                    # 记录失败交易
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction,
-                        status="failed",
-                        response=json.dumps({"error": f"获取市场价格失败: {ticker_result.get('msg', '未知错误')}"}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                current_price = float(ticker_result['data'][0].get('last', 0))
-                if current_price <= 0:
-                    logger.error(f"任务 {plan_id} 获取市场价格异常: {current_price}")
-                    # 记录失败交易
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction,
-                        status="failed",
-                        response=json.dumps({"error": f"获取市场价格异常: {current_price}"}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                # 计算卖出数量：如果plan.amount小于等于可用余额*当前价格，则按照plan.amount/当前价格计算卖出数量
-                # 否则卖出全部可用余额
-                if plan.amount <= available_amount * current_price:
-                    sell_size = plan.amount / current_price
-                else:
-                    sell_size = available_amount
-                
-                # 确保卖出数量不超过可用余额
-                sell_size = min(sell_size, available_amount)
-                
-                # 处理精度问题：OKX对不同币种有不同的精度要求
-                # 通常BTC是8位小数，ETH是6位小数，其他币种可能有不同要求
-                # 这里我们根据币种类型设置合适的精度
-                if base_currency == 'BTC':
-                    sell_size = round(sell_size, 8)  # BTC通常使用8位小数
-                elif base_currency == 'ETH':
-                    sell_size = round(sell_size, 6)  # ETH通常使用6位小数
-                else:
-                    sell_size = round(sell_size, 4)  # 其他币种默认使用4位小数
-                
-                # 确保数量大于0
-                if sell_size <= 0:
-                    logger.error(f"任务 {plan_id} 卖出失败: 计算后的卖出数量为0")
-                    # 记录失败交易
-                    transaction = Transaction(
-                        plan_id=plan.id,
-                        symbol=plan.symbol,
-                        amount=plan.amount,
-                        direction=plan.direction,
-                        status="failed",
-                        response=json.dumps({"error": "计算后的卖出数量为0"}),
-                        executed_at=datetime.now(TIMEZONE)
-                    )
-                    db.add(transaction)
-                    db.commit()
-                    return
-                
-                logger.info(f"任务 {plan_id} 卖出 {base_currency}: 金额 {plan.amount} USDT, 数量 {sell_size} {base_currency}, 当前价格 {current_price} USDT")
-                
-                # 执行卖出订单
-                order_result = client.place_order(
-                    symbol=plan.symbol,
-                    side=side,
-                    order_type="market",
-                    size=str(sell_size)
-                )
-        else:
-            # 买入逻辑保持不变
-            order_result = client.place_order(
-                symbol=plan.symbol,
-                side=side,
-                order_type="market",
-                size=str(plan.amount)
-                )
-            
-            # 记录执行结果
-            # 记录执行结果
-            logger.info(f"任务 {plan_id} 执行结果: {order_result}")
-            
-            # 创建交易记录
-            if order_result.get('code') == '0':
-                # 成功执行，尝试获取订单详情来获取成交价格和数量
-                order_id = None
-                fill_details = None
-                if order_result.get('data') and len(order_result['data']) > 0:
-                    order_id = order_result['data'][0].get('ordId')
-                
-                # 获取成交详情
-                if order_id:
-                    import time
-                    # 等待5秒让成交数据生成（增加等待时间）
-                    time.sleep(5)
-                    
-                    # 对于市价单，我们需要特别处理
-                    # 市价买单：sz表示买入金额，需要从成交明细获取实际成交数量
-                    # 市价卖单：sz表示卖出数量，需要从成交明细获取实际成交金额
-                    
-                    # 先尝试获取成交明细，这是最准确的
-                    fills_result = client.get_order_fills(order_id)
-                    logger.info(f"任务 {plan_id} 成交明细响应: {fills_result}")
-                    
-                    if fills_result.get('code') == '0' and fills_result.get('data') and len(fills_result['data']) > 0:
-                        # 成交明细可能有多条记录，我们需要汇总
-                        total_fill_px = 0
-                        total_fill_sz = 0
-                        total_fill_amt = 0
-                        fill_count = 0
-                        
-                        for fill_info in fills_result['data']:
-                            try:
-                                fill_px = float(fill_info.get('fillPx', 0))
-                                fill_sz = float(fill_info.get('fillSz', 0))
-                                
-                                if fill_px > 0 and fill_sz > 0:
-                                    total_fill_px += fill_px * fill_sz  # 加权价格
-                                    total_fill_sz += fill_sz
-                                    total_fill_amt += fill_px * fill_sz
-                                    fill_count += 1
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"解析成交明细数据异常: {str(e)}")
-                        
-                        # 计算加权平均价格
-                        if total_fill_sz > 0:
-                            avg_fill_px = total_fill_px / total_fill_sz
-                            
-                            fill_details = {
-                                'fillPx': str(avg_fill_px),  # 成交均价
-                                'fillSz': str(total_fill_sz),  # 累计成交数量
-                                'fillAmt': str(total_fill_amt),  # 成交金额
-                                'ordId': order_id
-                            }
-                            logger.info(f"任务 {plan_id} 从成交明细汇总获取成交信息: {fill_details}")
-                    
-                    # 如果成交明细没有数据，尝试获取订单详情
-                    if not fill_details:
-                        for attempt in range(3):  # 最多重试3次
-                            try:
-                                order_detail = client.get_order_detail(order_id)
-                                logger.info(f"任务 {plan_id} 订单详情响应 (尝试{attempt+1}): {order_detail}")
-                                
-                                if order_detail.get('code') == '0' and order_detail.get('data'):
-                                    order_info = order_detail['data'][0]
-                                    
-                                    # 检查订单状态是否已完成
-                                    if order_info.get('state') in ['filled', 'partially_filled']:
-                                        # 从订单详情中获取成交价格和数量
-                                        avg_px = order_info.get('avgPx')
-                                        acc_fill_sz = order_info.get('accFillSz')
-                                        fill_amt = None
-                                        
-                                        # 计算成交金额
-                                        if avg_px and acc_fill_sz:
-                                            try:
-                                                fill_amt = str(float(avg_px) * float(acc_fill_sz))
-                                            except (ValueError, TypeError):
-                                                pass
-                                        
-                                        # 确保值不为空
-                                        if avg_px and acc_fill_sz:
-                                            fill_details = {
-                                                'fillPx': avg_px,  # 成交均价
-                                                'fillSz': acc_fill_sz,  # 累计成交数量
-                                                'fillAmt': fill_amt,  # 成交金额
-                                                'ordId': order_id
-                                            }
-                                            logger.info(f"任务 {plan_id} 从订单详情获取成交信息: {fill_details}")
-                                            break
-                                    else:
-                                        logger.info(f"任务 {plan_id} 订单状态: {order_info.get('state')} (尝试{attempt+1})")
-                                
-                                if attempt < 2:  # 不是最后一次尝试
-                                    time.sleep(3)  # 等待3秒再重试
-                                    
-                            except Exception as e:
-                                logger.warning(f"任务 {plan_id} 获取订单详情异常 (尝试{attempt+1}): {str(e)}")
-                                if attempt < 2:  # 不是最后一次尝试
-                                    time.sleep(3)  # 等待3秒再重试
-                    
-                    # 如果仍然没有获取到成交信息，使用原始订单信息和当前市场价格估算
-                    if not fill_details:
-                        logger.warning(f"任务 {plan_id} 无法从API获取成交详情，使用估算值")
-                        
-                        # 获取当前市场价格
-                        try:
-                            ticker_result = client.get_ticker(plan.symbol)
-                            if ticker_result.get('code') == '0' and ticker_result.get('data'):
-                                current_price = float(ticker_result['data'][0].get('last', 0))
-                                
-                                # 根据订单类型估算成交信息
-                                if side == "buy":
-                                    # 买入：使用订单金额和当前价格估算
-                                    est_size = float(plan.amount) / current_price
-                                    fill_details = {
-                                        'fillPx': str(current_price),
-                                        'fillSz': str(est_size),
-                                        'fillAmt': str(plan.amount),
-                                        'ordId': order_id,
-                                        'estimated': True  # 标记为估算值
-                                    }
-                                else:
-                                    # 卖出：使用卖出数量和当前价格估算
-                                    if 'sell_size' in locals():
-                                        est_amount = float(sell_size) * current_price
-                                        fill_details = {
-                                            'fillPx': str(current_price),
-                                            'fillSz': str(sell_size),
-                                            'fillAmt': str(est_amount),
-                                            'ordId': order_id,
-                                            'estimated': True  # 标记为估算值
-                                        }
-                                
-                                logger.info(f"任务 {plan_id} 使用估算值作为成交信息: {fill_details}")
-                        except Exception as e:
-                            logger.warning(f"任务 {plan_id} 估算成交信息异常: {str(e)}")
-                
-                # 构建完整的响应数据，包含成交详情
-                complete_response = {
-                    "order_result": order_result,
-                    "fill_details": fill_details
-                }
-                
-                transaction = Transaction(
-                    plan_id=plan.id,
-                    symbol=plan.symbol,
-                    amount=plan.amount,
-                    direction=plan.direction or "buy",
-                    status="success",
-                    response=json.dumps(complete_response),
-                    executed_at=datetime.now(TIMEZONE)
-                )
-                db.add(transaction)
-                db.commit()
-                logger.info(f"任务 {plan_id} 交易记录已保存")
-            else:
-                # 执行失败
-                transaction = Transaction(
-                    plan_id=plan.id,
-                    symbol=plan.symbol,
-                    amount=plan.amount,
-                    direction=plan.direction or "buy",
-                    status="failed",
-                    response=json.dumps(order_result),
-                    executed_at=datetime.now(TIMEZONE)
-                )
-                db.add(transaction)
-                db.commit()
-                logger.error(f"任务 {plan_id} 执行失败: {order_result.get('msg', '未知错误')}")
-    except Exception as e:
-        logger.exception(f"任务 {plan_id} 执行异常: {str(e)}")
-        db.rollback()
-    finally:
-        db.close()
-
-# 调度任务
-def schedule_task(plan, check_missed=False):
-    job_id = f"dca_task_{plan.id}"
-    
-    # 如果已存在任务，先移除
-    if scheduler.get_job(job_id):
-        scheduler.remove_job(job_id)
-        logger.info(f"移除现有任务调度 {job_id}")
-    
-    # 如果任务已禁用，不再调度
-    if plan.status != "enabled":
-        logger.info(f"任务 {plan.id} 已禁用，不再调度")
-        return
-    
-    # 解析时间
-    try:
-        hour, minute = plan.time.split(":")
-        hour = int(hour)
-        minute = int(minute)
-    except (ValueError, TypeError) as e:
-        logger.error(f"任务 {plan.id} 时间格式错误: {plan.time}, 错误: {str(e)}")
-        return
-    
-    # 根据频率创建触发器
-    if plan.frequency == "daily":
-        trigger = CronTrigger(hour=hour, minute=minute, timezone=TIMEZONE)
-        logger.info(f"任务 {plan.id} 调度为每天 {hour:02d}:{minute:02d}")
-    elif plan.frequency == "weekly" and plan.day_of_week is not None:
-        trigger = CronTrigger(day_of_week=plan.day_of_week, hour=hour, minute=minute, timezone=TIMEZONE)
-        logger.info(f"任务 {plan.id} 调度为每周 {plan.day_of_week} {hour:02d}:{minute:02d}")
-    elif plan.frequency == "monthly":
-        if plan.month_days and len(plan.month_days) > 0:
-            try:
-                month_days = json.loads(plan.month_days)
-                # 为每个日期创建单独的任务
-                for day in month_days:
-                    day_job_id = f"dca_task_{plan.id}_day_{day}"
-                    if scheduler.get_job(day_job_id):
-                        scheduler.remove_job(day_job_id)
-                        logger.info(f"移除现有月度任务调度 {day_job_id}")
-                    
-                    day_trigger = CronTrigger(day=day, hour=hour, minute=minute, timezone=TIMEZONE)
-                    scheduler.add_job(
-                        execute_dca_task,
-                        trigger=day_trigger,
-                        args=[plan.id],
-                        id=day_job_id,
-                        replace_existing=True,
-                        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
-                        coalesce=True,  # 合并错过的执行
-                        max_instances=1  # 最多同时运行1个实例
-                    )
-                    logger.info(f"任务 {plan.id} 调度为每月 {day}日 {hour:02d}:{minute:02d}, job_id={day_job_id}")
-                
-                # 已经为每个日期创建了单独的任务，不需要再创建主任务
-                return
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"解析月份日期失败: {str(e)}, 原始数据: {plan.month_days}")
-                # 如果解析失败，回退到默认行为：每月1日执行
-                trigger = CronTrigger(day=1, hour=hour, minute=minute, timezone=TIMEZONE)
-                logger.info(f"任务 {plan.id} 解析月份日期失败，回退到每月1日 {hour:02d}:{minute:02d}")
-        else:
-            # 如果没有指定日期，默认每月1日执行
-            trigger = CronTrigger(day=1, hour=hour, minute=minute, timezone=TIMEZONE)
-            logger.info(f"任务 {plan.id} 调度为每月1日 {hour:02d}:{minute:02d}")
-    else:
-        logger.error(f"任务 {plan.id} 频率配置错误: {plan.frequency}")
-        return
-    
-    # 添加任务（针对每日和每周的情况，或者月份解析失败的情况）
-    scheduler.add_job(
-        execute_dca_task,
-        trigger=trigger,
-        args=[plan.id],
-        id=job_id,
-        replace_existing=True,
-        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
-        coalesce=True,  # 合并错过的执行
-        max_instances=1  # 最多同时运行1个实例
-    )
-    logger.info(f"成功添加任务调度 {job_id}")
-    
-    # 检查任务是否成功添加
-    job = scheduler.get_job(job_id)
-    if job:
-        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "未调度"
-        logger.info(f"任务 {plan.id} 下次执行时间: {next_run}")
-        
-        # 检查是否需要立即执行一次任务（仅当check_missed为True时）
-        if check_missed and job.next_run_time:
-            now = datetime.now(TIMEZONE)
-            # 如果下次执行时间比当前时间晚很多（超过一个周期），可能是因为今天的执行时间已经过去
-            # 检查今天是否已经执行过
-            today = now.date()
-            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
-            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
-            
-            db = SessionLocal()
-            try:
-                # 检查今天是否已经执行过该任务
-                existing_transaction = db.query(Transaction).filter(
-                    Transaction.plan_id == plan.id,
-                    Transaction.executed_at >= today_start,
-                    Transaction.executed_at <= today_end
-                ).first()
-                
-                # 如果今天没有执行过，并且当前时间已经超过了计划执行时间，则立即执行一次
-                plan_hour, plan_minute = map(int, plan.time.split(":"))
-                plan_time_today = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
-                plan_time_today = plan_time_today.replace(hour=plan_hour, minute=plan_minute)
-                
-                if not existing_transaction and now >= plan_time_today:
-                    # 检查是否符合执行条件（每周或每月的特定日期）
-                    should_execute = False
-                    
-                    if plan.frequency == "daily":
-                        should_execute = True
-                    elif plan.frequency == "weekly" and plan.day_of_week is not None:
-                        # 检查今天是否是指定的星期几
-                        if now.weekday() == plan.day_of_week:
-                            should_execute = True
-                    elif plan.frequency == "monthly" and plan.month_days:
-                        # 检查今天是否是指定的月份日期
-                        try:
-                            month_days = json.loads(plan.month_days)
-                            if now.day in month_days:
-                                should_execute = True
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                    
-                    if should_execute:
-                        logger.info(f"任务 {plan.id} 编辑后时间已过，立即执行一次")
-                        # 在新线程中执行，避免阻塞当前线程
-                        import threading
-                        threading.Thread(target=execute_dca_task, args=[plan.id]).start()
-            finally:
-                db.close()
-    else:
-        logger.error(f"任务 {plan.id} 调度失败，未找到对应的任务")
-
-
-# 初始化所有任务的调度
-def init_scheduler():
-    logger.info("初始化定时任务调度")
-    db = SessionLocal()
-    try:
-        plans = db.query(DCAPlan).filter(DCAPlan.status == "enabled").all()
-        for plan in plans:
-            schedule_task(plan)
-        logger.info(f"成功调度 {len(plans)} 个定投任务")
-    except Exception as e:
-        logger.exception(f"初始化定时任务异常: {str(e)}")
-    finally:
-        db.close()
-
-# 记录资产历史数据的定时任务
-@scheduler.scheduled_job('cron', hour=0, minute=0, timezone=TIMEZONE)
-def record_asset_history():
-    """每天零点记录一次定投策略的资产数据（优化版本：每天只记录一条）"""
-    try:
-        logger.info("开始记录定投策略资产历史数据")
-        
-        # 获取资产数据
-        asset_data = get_assets_overview(force_refresh=True)
-        
-        # 如果有错误，记录日志但不保存数据
-        if "error" in asset_data:
-            logger.error(f"记录资产历史数据失败: {asset_data['error']}")
-            return
-        
-        # 记录到数据库
-        db = SessionLocal()
-        try:
-            # 检查今天是否已经有记录了（防止重复记录）
-            today = datetime.now(TIMEZONE).date()
-            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
-            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
-            
-            existing_record = db.query(AssetHistory).filter(
-                AssetHistory.recorded_at >= today_start,
-                AssetHistory.recorded_at <= today_end
-            ).first()
-            
-            if existing_record:
-                logger.info("今天已经有资产历史记录，跳过记录")
-                return
-            
-            # 记录昨天的数据（使用昨天23:59:59作为记录时间）
-            yesterday = today - timedelta(days=1)
-            record_time = datetime.combine(yesterday, datetime.max.time()).replace(tzinfo=TIMEZONE)
-            
-            history = AssetHistory(
-                total_assets=asset_data["totalAssets"],
-                total_investment=asset_data["totalInvestment"],
-                total_profit=asset_data["totalProfit"],
-                asset_distribution=json.dumps(asset_data["assetDistribution"]),
-                recorded_at=record_time
-            )
-            db.add(history)
-            db.commit()
-            logger.info(f"定投策略资产历史数据记录成功: {record_time}")
-        except Exception as e:
-            db.rollback()
-            logger.exception(f"保存资产历史数据异常: {str(e)}")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.exception(f"记录资产历史数据任务异常: {str(e)}")
-
-# 删除了多余的计算函数（夏普比率、最大回撤等）
-
-# 资产历史数据缓存
-history_cache = {
-    "data": {},  # 按天数缓存: {days: {data: result, timestamp: time}}
-    "ttl": 60    # 缓存1分钟，减少缓存时间
-}
-from fastapi import FastAPI, HTTPException, Body
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, timedelta
-import threading
-import json
-import logging
-import os
-import time
-import pytz
-
-# 导入自定义模块
-from models import Base, UserConfig, DCAPlan, Transaction, AssetHistory, encrypt_text, decrypt_text
-from okx_api import OKXClient, get_popular_coins_public
-from proxy_api import OKXProxyClient
-
-# 配置日志
-log_dir = os.path.dirname(os.path.abspath(__file__))
-log_file = os.path.join(log_dir, 'dca_service.log')
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(log_file)
-    ]
-)
-logger = logging.getLogger("dca-service")
-
-DATABASE_URL = "sqlite:///./dca.db"
-
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-app = FastAPI()
-
-# 允许所有来源跨域（开发环境用，生产建议指定域名）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 或指定前端地址如 ["http://13.158.74.102"]
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 使用Asia/Shanghai时区
-TIMEZONE = pytz.timezone('Asia/Shanghai')
-
-# 配置调度器，使用Asia/Shanghai时区
-scheduler = BackgroundScheduler(timezone=TIMEZONE)
-scheduler.start()
-lock = threading.Lock()
-
-# 创建数据库表
-Base.metadata.create_all(bind=engine)
-
-
-# 执行定投任务
 def execute_dca_task(plan_id: int):
+    """执行DCA任务"""
     logger.info(f"执行定投任务 ID: {plan_id}")
     with lock:
         db = SessionLocal()
@@ -965,7 +335,6 @@ def execute_dca_task(plan_id: int):
                     size=str(plan.amount)
                 )
             
-            # 记录执行结果
             # 记录执行结果
             logger.info(f"任务 {plan_id} 执行结果: {order_result}")
             
@@ -1352,79 +721,222 @@ def record_asset_history():
     except Exception as e:
         logger.exception(f"记录资产历史数据任务异常: {str(e)}")
 
-# 获取资产历史数据的API
-def calculate_max_drawdown(asset_history):
-    """计算最大回撤"""
-    if not asset_history or len(asset_history) < 2:
-        return 0
-    
-    # 提取总资产值
-    values = [record["totalAssets"] for record in asset_history]
-    
-    # 计算最大回撤
-    max_drawdown = 0
-    peak = values[0]
-    
-    for value in values:
-        if value > peak:
-            peak = value
-        else:
-            drawdown = (peak - value) / peak if peak > 0 else 0
-            max_drawdown = max(max_drawdown, drawdown)
-    
-    return max_drawdown
+# 资产历史数据缓存
+history_cache = {
+    "data": {},  # 按天数缓存: {days: {data: result, timestamp: time}}
+    "ttl": 60    # 缓存1分钟，减少缓存时间
+}
 
-def calculate_sharpe_ratio(result, risk_free_rate=0.02):
-    """计算夏普比率
+
+# 调度任务
+def schedule_task(plan, check_missed=False):
+    job_id = f"dca_task_{plan.id}"
     
-    参数:
-        result: 资产历史数据列表
-        risk_free_rate: 无风险利率，默认为2%
+    # 如果已存在任务，先移除
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+        logger.info(f"移除现有任务调度 {job_id}")
     
-    返回:
-        夏普比率，如果无法计算则返回0
-    """
-    if len(result) <= 1:
-        return 0
+    # 如果任务已禁用，不再调度
+    if plan.status != "enabled":
+        logger.info(f"任务 {plan.id} 已禁用，不再调度")
+        return
     
+    # 解析时间
     try:
-        # 不使用numpy，用纯Python实现
-        # 提取总资产值
-        values = [record["totalAssets"] for record in result]
+        hour, minute = plan.time.split(":")
+        hour = int(hour)
+        minute = int(minute)
+    except (ValueError, TypeError) as e:
+        logger.error(f"任务 {plan.id} 时间格式错误: {plan.time}, 错误: {str(e)}")
+        return
+    
+    # 根据频率创建触发器
+    if plan.frequency == "daily":
+        trigger = CronTrigger(hour=hour, minute=minute, timezone=TIMEZONE)
+        logger.info(f"任务 {plan.id} 调度为每天 {hour:02d}:{minute:02d}")
+    elif plan.frequency == "weekly" and plan.day_of_week is not None:
+        trigger = CronTrigger(day_of_week=plan.day_of_week, hour=hour, minute=minute, timezone=TIMEZONE)
+        logger.info(f"任务 {plan.id} 调度为每周 {plan.day_of_week} {hour:02d}:{minute:02d}")
+    elif plan.frequency == "monthly":
+        if plan.month_days and len(plan.month_days) > 0:
+            try:
+                month_days = json.loads(plan.month_days)
+                # 为每个日期创建单独的任务
+                for day in month_days:
+                    day_job_id = f"dca_task_{plan.id}_day_{day}"
+                    if scheduler.get_job(day_job_id):
+                        scheduler.remove_job(day_job_id)
+                        logger.info(f"移除现有月度任务调度 {day_job_id}")
+                    
+                    day_trigger = CronTrigger(day=day, hour=hour, minute=minute, timezone=TIMEZONE)
+                    scheduler.add_job(
+                        execute_dca_task,
+                        trigger=day_trigger,
+                        args=[plan.id],
+                        id=day_job_id,
+                        replace_existing=True,
+                        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
+                        coalesce=True,  # 合并错过的执行
+                        max_instances=1  # 最多同时运行1个实例
+                    )
+                    logger.info(f"任务 {plan.id} 调度为每月 {day}日 {hour:02d}:{minute:02d}, job_id={day_job_id}")
+                
+                # 已经为每个日期创建了单独的任务，不需要再创建主任务
+                return
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"解析月份日期失败: {str(e)}, 原始数据: {plan.month_days}")
+                # 如果解析失败，回退到默认行为：每月1日执行
+                trigger = CronTrigger(day=1, hour=hour, minute=minute, timezone=TIMEZONE)
+                logger.info(f"任务 {plan.id} 解析月份日期失败，回退到每月1日 {hour:02d}:{minute:02d}")
+        else:
+            # 如果没有指定日期，默认每月1日执行
+            trigger = CronTrigger(day=1, hour=hour, minute=minute, timezone=TIMEZONE)
+            logger.info(f"任务 {plan.id} 调度为每月1日 {hour:02d}:{minute:02d}")
+    else:
+        logger.error(f"任务 {plan.id} 频率配置错误: {plan.frequency}")
+        return
+    
+    # 添加任务（针对每日和每周的情况，或者月份解析失败的情况）
+    scheduler.add_job(
+        execute_dca_task,
+        trigger=trigger,
+        args=[plan.id],
+        id=job_id,
+        replace_existing=True,
+        misfire_grace_time=86400,  # 允许任务最多延迟1天执行
+        coalesce=True,  # 合并错过的执行
+        max_instances=1  # 最多同时运行1个实例
+    )
+    logger.info(f"成功添加任务调度 {job_id}")
+    
+    # 检查任务是否成功添加
+    job = scheduler.get_job(job_id)
+    if job:
+        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "未调度"
+        logger.info(f"任务 {plan.id} 下次执行时间: {next_run}")
         
-        # 计算日收益率
-        returns = [(values[i] - values[i-1]) / values[i-1] if values[i-1] > 0 else 0 
-                for i in range(1, len(values))]
-        
-        if not returns:
-            return 0
-        
-        # 计算平均日收益率
-        avg_return = sum(returns) / len(returns)
-        
-        # 计算日收益率标准差
-        variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
-        std_return = variance ** 0.5
-        
-        if std_return == 0:
-            return 0
-        
-        # 计算日无风险利率
-        daily_risk_free = risk_free_rate / 252
-        
-        # 计算夏普比率
-        sharpe = (avg_return - daily_risk_free) / std_return
-        
-        # 年化夏普比率
-        annual_sharpe = sharpe * (252 ** 0.5)
-        
-        return annual_sharpe
+        # 检查是否需要立即执行一次任务（仅当check_missed为True时）
+        if check_missed and job.next_run_time:
+            now = datetime.now(TIMEZONE)
+            # 如果下次执行时间比当前时间晚很多（超过一个周期），可能是因为今天的执行时间已经过去
+            # 检查今天是否已经执行过
+            today = now.date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            
+            db = SessionLocal()
+            try:
+                # 检查今天是否已经执行过该任务
+                existing_transaction = db.query(Transaction).filter(
+                    Transaction.plan_id == plan.id,
+                    Transaction.executed_at >= today_start,
+                    Transaction.executed_at <= today_end
+                ).first()
+                
+                # 如果今天没有执行过，并且当前时间已经超过了计划执行时间，则立即执行一次
+                plan_hour, plan_minute = map(int, plan.time.split(":"))
+                plan_time_today = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+                plan_time_today = plan_time_today.replace(hour=plan_hour, minute=plan_minute)
+                
+                if not existing_transaction and now >= plan_time_today:
+                    # 检查是否符合执行条件（每周或每月的特定日期）
+                    should_execute = False
+                    
+                    if plan.frequency == "daily":
+                        should_execute = True
+                    elif plan.frequency == "weekly" and plan.day_of_week is not None:
+                        # 检查今天是否是指定的星期几
+                        if now.weekday() == plan.day_of_week:
+                            should_execute = True
+                    elif plan.frequency == "monthly" and plan.month_days:
+                        # 检查今天是否是指定的月份日期
+                        try:
+                            month_days = json.loads(plan.month_days)
+                            if now.day in month_days:
+                                should_execute = True
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                    
+                    if should_execute:
+                        logger.info(f"任务 {plan.id} 编辑后时间已过，立即执行一次")
+                        # 在新线程中执行，避免阻塞当前线程
+                        import threading
+                        threading.Thread(target=execute_dca_task, args=[plan.id]).start()
+            finally:
+                db.close()
+    else:
+        logger.error(f"任务 {plan.id} 调度失败，未找到对应的任务")
+
+
+# 初始化所有任务的调度
+def init_scheduler():
+    logger.info("初始化定时任务调度")
+    db = SessionLocal()
+    try:
+        plans = db.query(DCAPlan).filter(DCAPlan.status == "enabled").all()
+        for plan in plans:
+            schedule_task(plan)
+        logger.info(f"成功调度 {len(plans)} 个定投任务")
     except Exception as e:
-        logger.warning(f"计算夏普比率异常: {str(e)}")
-        return 0
+        logger.exception(f"初始化定时任务异常: {str(e)}")
+    finally:
+        db.close()
 
+# 记录资产历史数据的定时任务
+@scheduler.scheduled_job('cron', hour=0, minute=0, timezone=TIMEZONE)
+def record_asset_history():
+    """每天零点记录一次定投策略的资产数据（优化版本：每天只记录一条）"""
+    try:
+        logger.info("开始记录定投策略资产历史数据")
+        
+        # 获取资产数据
+        asset_data = get_assets_overview(force_refresh=True)
+        
+        # 如果有错误，记录日志但不保存数据
+        if "error" in asset_data:
+            logger.error(f"记录资产历史数据失败: {asset_data['error']}")
+            return
+        
+        # 记录到数据库
+        db = SessionLocal()
+        try:
+            # 检查今天是否已经有记录了（防止重复记录）
+            today = datetime.now(TIMEZONE).date()
+            today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=TIMEZONE)
+            today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            
+            existing_record = db.query(AssetHistory).filter(
+                AssetHistory.recorded_at >= today_start,
+                AssetHistory.recorded_at <= today_end
+            ).first()
+            
+            if existing_record:
+                logger.info("今天已经有资产历史记录，跳过记录")
+                return
+            
+            # 记录昨天的数据（使用昨天23:59:59作为记录时间）
+            yesterday = today - timedelta(days=1)
+            record_time = datetime.combine(yesterday, datetime.max.time()).replace(tzinfo=TIMEZONE)
+            
+            history = AssetHistory(
+                total_assets=asset_data["totalAssets"],
+                total_investment=asset_data["totalInvestment"],
+                total_profit=asset_data["totalProfit"],
+                asset_distribution=json.dumps(asset_data["assetDistribution"]),
+                recorded_at=record_time
+            )
+            db.add(history)
+            db.commit()
+            logger.info(f"定投策略资产历史数据记录成功: {record_time}")
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"保存资产历史数据异常: {str(e)}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.exception(f"记录资产历史数据任务异常: {str(e)}")
 
-# 删除了简化资产概览缓存，因为不再需要实时计算当天数据
 
 @app.get("/api/assets/history")
 def get_asset_history(days: int = 30):
@@ -2436,6 +1948,241 @@ def get_assets_overview(force_refresh: bool = False):
         assets_cache["timestamp"] = current_time
         return result
 
+def get_strategy_info(db):
+    """获取策略基本信息"""
+    try:
+        # 获取第一个交易记录的时间作为策略开始时间
+        first_transaction = db.query(Transaction).order_by(Transaction.executed_at.asc()).first()
+        
+        if not first_transaction:
+            return {
+                "startDate": None,
+                "daysRunning": 0,
+                "executionCount": 0
+            }
+        
+        start_date = first_transaction.executed_at
+        days_running = (datetime.now(TIMEZONE) - start_date).days
+        execution_count = db.query(Transaction).filter(Transaction.status == "success").count()
+        
+        return {
+            "startDate": start_date.isoformat(),
+            "daysRunning": max(1, days_running),  # 至少1天
+            "executionCount": execution_count
+        }
+    except Exception as e:
+        logger.exception(f"获取策略信息异常: {str(e)}")
+        return {
+            "startDate": None,
+            "daysRunning": 0,
+            "executionCount": 0
+        }
+
+# API端点
+@app.get("/health")
+def health_check():
+    """健康检查"""
+    return {"status": "ok", "timestamp": datetime.now(TIMEZONE).isoformat()}
+
+@app.get("/api/debug/status")
+def debug_status():
+    """调试状态信息"""
+    env = "local" if is_local_environment() else "production"
+    return {
+        "environment": env,
+        "timezone": str(TIMEZONE),
+        "scheduler_running": scheduler.running,
+        "jobs_count": len(scheduler.get_jobs())
+    }
+
+@app.get("/api/config/api")
+def get_api_config():
+    """获取API配置"""
+    db = next(get_db())
+    config = db.query(UserConfig).first()
+    
+    if not config:
+        return ConfigResponse()
+    
+    try:
+        api_key = decrypt_text(config.api_key) if config.api_key else ""
+        secret_key = decrypt_text(config.secret_key) if config.secret_key else ""
+        passphrase = decrypt_text(config.passphrase) if config.passphrase else ""
+        selected_coins = json.loads(config.selected_coins) if config.selected_coins else []
+        
+        return ConfigResponse(
+            api_key=api_key,
+            secret_key=secret_key,
+            passphrase=passphrase,
+            selected_coins=selected_coins
+        )
+    except Exception as e:
+        logger.exception(f"获取API配置异常: {str(e)}")
+        return ConfigResponse()
+
+@app.post("/api/config/api")
+def save_api_config(config: ApiConfig):
+    """保存API配置"""
+    db = next(get_db())
+    
+    try:
+        # 加密存储
+        encrypted_api_key = encrypt_text(config.api_key)
+        encrypted_secret_key = encrypt_text(config.secret_key)
+        encrypted_passphrase = encrypt_text(config.passphrase)
+        
+        # 查找现有配置
+        existing_config = db.query(UserConfig).first()
+        
+        if existing_config:
+            # 更新现有配置
+            existing_config.api_key = encrypted_api_key
+            existing_config.secret_key = encrypted_secret_key
+            existing_config.passphrase = encrypted_passphrase
+        else:
+            # 创建新配置
+            new_config = UserConfig(
+                api_key=encrypted_api_key,
+                secret_key=encrypted_secret_key,
+                passphrase=encrypted_passphrase
+            )
+            db.add(new_config)
+        
+        db.commit()
+        return {"message": "API配置保存成功"}
+        
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"保存API配置异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")
+
+@app.get("/api/plans")
+def get_dca_plans():
+    """获取所有DCA计划"""
+    db = next(get_db())
+    plans = db.query(DCAPlan).order_by(DCAPlan.created_at.desc()).all()
+    return [DCAPlanOut.from_orm(plan) for plan in plans]
+
+@app.post("/api/plans")
+def create_dca_plan(plan: DCAPlanCreate):
+    """创建DCA计划"""
+    db = next(get_db())
+    
+    try:
+        new_plan = DCAPlan(
+            title=plan.title,
+            symbol=plan.symbol,
+            amount=plan.amount,
+            frequency=plan.frequency,
+            day_of_week=plan.day_of_week,
+            month_days=plan.month_days,
+            time=plan.time,
+            direction=plan.direction,
+            status="enabled"
+        )
+        
+        db.add(new_plan)
+        db.commit()
+        db.refresh(new_plan)
+        
+        # 调度任务
+        schedule_task(new_plan)
+        
+        return DCAPlanOut.from_orm(new_plan)
+        
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"创建DCA计划异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"创建计划失败: {str(e)}")
+
+@app.put("/api/plans/{plan_id}")
+def update_dca_plan(plan_id: int, plan: DCAPlanCreate):
+    """更新DCA计划"""
+    db = next(get_db())
+    
+    try:
+        existing_plan = db.query(DCAPlan).filter(DCAPlan.id == plan_id).first()
+        if not existing_plan:
+            raise HTTPException(status_code=404, detail="计划不存在")
+        
+        # 更新字段
+        existing_plan.title = plan.title
+        existing_plan.symbol = plan.symbol
+        existing_plan.amount = plan.amount
+        existing_plan.frequency = plan.frequency
+        existing_plan.day_of_week = plan.day_of_week
+        existing_plan.month_days = plan.month_days
+        existing_plan.time = plan.time
+        existing_plan.direction = plan.direction
+        
+        db.commit()
+        
+        # 重新调度任务
+        schedule_task(existing_plan, check_missed=True)
+        
+        return DCAPlanOut.from_orm(existing_plan)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"更新DCA计划异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新计划失败: {str(e)}")
+
+@app.delete("/api/plans/{plan_id}")
+def delete_dca_plan(plan_id: int):
+    """删除DCA计划"""
+    db = next(get_db())
+    
+    try:
+        plan = db.query(DCAPlan).filter(DCAPlan.id == plan_id).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="计划不存在")
+        
+        # 移除调度任务
+        job_id = f"dca_task_{plan_id}"
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+        
+        # 删除计划
+        db.delete(plan)
+        db.commit()
+        
+        return {"message": "计划删除成功"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"删除DCA计划异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除计划失败: {str(e)}")
+
+@app.post("/api/plans/{plan_id}/toggle")
+def toggle_dca_plan(plan_id: int):
+    """启用/禁用DCA计划"""
+    db = next(get_db())
+    
+    try:
+        plan = db.query(DCAPlan).filter(DCAPlan.id == plan_id).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="计划不存在")
+        
+        # 切换状态
+        plan.status = "disabled" if plan.status == "enabled" else "enabled"
+        db.commit()
+        
+        # 重新调度任务
+        schedule_task(plan)
+        
+        return {"message": f"计划已{'启用' if plan.status == 'enabled' else '禁用'}"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"切换DCA计划状态异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"操作失败: {str(e)}")
+
 # 代理接口
 @app.post("/api/proxy/okx")
 def proxy_okx_request(request_data: dict):
@@ -2462,3 +2209,9 @@ def proxy_okx_request(request_data: dict):
     except Exception as e:
         logger.exception(f"代理请求异常: {str(e)}")
         return {"code": "ERROR", "msg": f"代理请求失败: {str(e)}"}
+
+# 启动时初始化调度器
+@app.on_event("startup")
+def startup_event():
+    logger.info("服务启动，初始化调度器")
+    init_scheduler()
