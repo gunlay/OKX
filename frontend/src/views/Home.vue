@@ -71,12 +71,6 @@
             </span>
           </div>
         </div>
-        <div class="asset-item">
-          <div class="label">年化收益率</div>
-          <div class="value" :class="{ 'profit': annualizedReturn >= 0, 'loss': annualizedReturn < 0 }">
-            {{ formatAnnualizedReturn(annualizedReturn) }}
-          </div>
-        </div>
         <div class="strategy-info" v-if="strategyInfo.startDate">
           <div>策略开始: {{ formatDate(strategyInfo.startDate) }}</div>
           <div>执行次数: {{ strategyInfo.executionCount }} 次</div>
@@ -145,7 +139,6 @@ export default {
       totalAssets: 0,
       totalInvestment: 0,
       totalProfit: 0,
-      annualizedReturn: 0,
       assetDistribution: [],
       loading: true,
       error: '',
@@ -202,7 +195,6 @@ export default {
         this.totalAssets = data.totalAssets || 0;
         this.totalInvestment = data.totalInvestment || 0;
         this.totalProfit = data.totalProfit || 0;
-        this.annualizedReturn = data.annualizedReturn || 0;
         this.assetDistribution = data.assetDistribution || [];
         
         console.log('设置资产数据:', {
@@ -285,11 +277,6 @@ export default {
       return `${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%`;
     },
     
-    formatAnnualizedReturn(rate) {
-      if (!rate) return '0.00%';
-      const percentage = rate * 100;
-      return `${percentage >= 0 ? '+' : ''}${percentage.toFixed(2)}%`;
-    },
     
     formatDate(date) {
       if (!date) return '';
