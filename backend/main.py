@@ -1887,19 +1887,8 @@ def get_assets_overview(force_refresh: bool = False):
             assets_cache["timestamp"] = current_time
             return result
         
-        # 2. 计算总收益和年化收益率
+        # 2. 计算总收益
         total_profit = total_assets - total_investment
-        
-        # 计算年化收益率
-        annualized_return = 0
-        strategy_info = get_strategy_info(db)
-        days_running = strategy_info.get('daysRunning', 0)
-        
-        if days_running > 0 and total_investment > 0:
-            # 计算总收益率
-            total_return_rate = total_profit / total_investment
-            # 转换为年化收益率: (1 + r)^(365/days) - 1
-            annualized_return = ((1 + total_return_rate) ** (365 / days_running)) - 1
         
         # 3. 计算资产分布
         full_asset_distribution = calculate_asset_distribution(assets, total_assets)
@@ -1921,7 +1910,6 @@ def get_assets_overview(force_refresh: bool = False):
             "totalAssets": total_assets,
             "totalInvestment": total_investment,
             "totalProfit": total_profit,
-            "annualizedReturn": annualized_return,
             "assetDistribution": simplified_distribution,
             "strategyInfo": strategy_info,
             "lastUpdated": datetime.now(TIMEZONE).isoformat()
