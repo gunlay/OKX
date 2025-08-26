@@ -87,15 +87,10 @@ export const transactionApi = {
   getTransactions: (params) => api.get('/transactions', { params }),
 };
 
-// 行情相关 API - 从本地后端获取
-const localApi = axios.create({
-  baseURL: 'http://localhost:8000/api',
-  timeout: 15000,
-});
-
+// 行情相关 API
 export const marketApi = {
-  // 获取行情数据 - 使用本地API
-  getTickers: () => localApi.get('/market/tickers'),
+  // 获取行情数据 - 使用统一的API基础URL
+  getTickers: () => api.get('/market/tickers'),
 };
 
 export default api;
