@@ -157,6 +157,10 @@ class OKXClient:
         """获取币种价格"""
         return self._request('GET', 'market/ticker', params={'instId': symbol})
     
+    def get_tickers(self, inst_type: str = 'SPOT') -> Dict[str, Any]:
+        """获取所有币种行情数据"""
+        return self._request('GET', 'market/tickers', params={'instType': inst_type})
+    
     def place_order(self, symbol: str, side: str, order_type: str, size: str, price: Optional[str] = None) -> Dict[str, Any]:
         """下单"""
         data = {
@@ -233,6 +237,7 @@ class OKXClient:
         except Exception as e:
             print(f"获取热门币种异常: {str(e)}")
             return []
+    
 
 # 无需API密钥的公共方法
 def get_popular_coins_public(limit: int = 100) -> List[str]:

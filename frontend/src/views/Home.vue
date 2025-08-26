@@ -576,11 +576,11 @@ export default {
 }
 
 .profit {
-  color: #52c41a;
+  color: #ff4d4f;  /* 红涨 */
 }
 
 .loss {
-  color: #ff4d4f;
+  color: #52c41a;  /* 绿跌 */
 }
 
 .profit-rate {

@@ -84,6 +84,10 @@ class OKXProxyClient:
         """获取币种价格"""
         return self._proxy_request('GET', 'market/ticker', params={'instId': symbol})
     
+    def get_tickers(self, inst_type: str = 'SPOT') -> Dict[str, Any]:
+        """获取所有币种行情数据"""
+        return self._proxy_request('GET', 'market/tickers', params={'instType': inst_type})
+    
     def place_order(self, symbol: str, side: str, order_type: str, size: str, price: Optional[str] = None) -> Dict[str, Any]:
         """下单"""
         data = {

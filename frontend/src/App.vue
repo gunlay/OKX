@@ -17,6 +17,14 @@
       </div>
       <div 
         class="nav-item" 
+        :class="{ active: $route.path === '/market' }"
+        @click="$router.push('/market')"
+      >
+        <i class="icon">📈</i>
+        <span>行情</span>
+      </div>
+      <div 
+        class="nav-item" 
         :class="{ active: $route.path === '/transactions' }"
         @click="$router.push('/transactions')"
       >

@@ -1972,6 +1972,116 @@ def health_check():
     """健康检查"""
     return {"status": "ok", "timestamp": datetime.now(TIMEZONE).isoformat()}
 
+
+@app.get("/api/market/tickers")
+def get_market_tickers():
+    """获取配置币种的行情数据"""
+    try:
+        db = SessionLocal()
+        
+        # 获取配置的币种列表
+        config = db.query(UserConfig).first()
+        if not config or not config.selected_coins:
+            return {"code": "ERROR", "msg": "未配置交易币种", "data": []}
+        
+        selected_coins = json.loads(config.selected_coins)
+        if not selected_coins:
+            return {"code": "ERROR", "msg": "未选择任何币种", "data": []}
+        
+        # 获取API配置
+        user_config = db.query(UserConfig).first()
+        if not user_config or not user_config.api_key:
+            return {"code": "ERROR", "msg": "未配置API密钥", "data": []}
+        
+        # 解密API配置
+        try:
+            api_key = decrypt_text(user_config.api_key)
+            secret_key = decrypt_text(user_config.secret_key)
+            passphrase = decrypt_text(user_config.passphrase)
+        except Exception as e:
+            logger.error(f"解密API配置失败: {e}")
+            return {"code": "ERROR", "msg": "API配置解密失败", "data": []}
+        
+        # 创建OKX客户端
+        client = create_okx_client(api_key, secret_key, passphrase)
+        
+        # 获取所有行情数据
+        tickers_result = client.get_tickers('SPOT')
+        
+        if tickers_result.get('code') != '0':
+            logger.error(f"获取行情数据失败: {tickers_result.get('msg', '未知错误')}")
+            return {"code": "ERROR", "msg": f"获取行情数据失败: {tickers_result.get('msg', '未知错误')}", "data": []}
+        
+        # 筛选配置的币种
+        market_data = []
+        for ticker in tickers_result.get('data', []):
+            inst_id = ticker.get('instId', '')
+            if '-USDT' in inst_id:
+                symbol = inst_id.replace('-USDT', '')
+                if symbol in selected_coins:
+                    try:
+                        current_price = float(ticker.get('last', 0))
+                        open_24h = float(ticker.get('open24h', 0))
+                        
+                        # 计算24小时涨跌幅
+                        if open_24h > 0:
+                            change_24h_percent = ((current_price - open_24h) / open_24h) * 100
+                        else:
+                            change_24h_percent = 0
+                        
+                        # 获取更多字段
+                        high_24h = float(ticker.get('high24h', 0))
+                        low_24h = float(ticker.get('low24h', 0))
+                        sod_utc8 = float(ticker.get('sodUtc8', 0))  # 北京时间0点开盘价
+                        
+                        # 计算当日涨跌幅（基于北京时间0点）
+                        if sod_utc8 > 0:
+                            change_daily_percent = ((current_price - sod_utc8) / sod_utc8) * 100
+                        else:
+                            change_daily_percent = 0
+                        
+                        # 计算当前价格与24小时最高价的涨跌幅
+                        if high_24h > 0:
+                            change_from_high = ((current_price - high_24h) / high_24h) * 100
+                        else:
+                            change_from_high = 0
+                        
+                        # 计算当前价格与24小时最低价的涨跌幅
+                        if low_24h > 0:
+                            change_from_low = ((current_price - low_24h) / low_24h) * 100
+                        else:
+                            change_from_low = 0
+                        
+                        market_data.append({
+                            'symbol': symbol,
+                            'instId': inst_id,
+                            'price': current_price,
+                            'high24h': high_24h,
+                            'low24h': low_24h,
+                            'change24h': change_24h_percent,
+                            'changePercent24h': f"{change_24h_percent:+.2f}%",
+                            'changeDaily': change_daily_percent,
+                            'changePercentDaily': f"{change_daily_percent:+.2f}%",
+                            'changeFromHigh': change_from_high,
+                            'changeFromHighPercent': f"{change_from_high:+.2f}%",
+                            'changeFromLow': change_from_low,
+                            'changeFromLowPercent': f"{change_from_low:+.2f}%"
+                        })
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"解析行情数据失败 {inst_id}: {e}")
+                        continue
+        
+        # 按涨跌幅排序
+        market_data.sort(key=lambda x: x['change24h'], reverse=True)
+        
+        return {"code": "0", "msg": "success", "data": market_data}
+        
+    except Exception as e:
+        logger.error(f"获取行情数据异常: {e}")
+        return {"code": "ERROR", "msg": f"获取行情数据异常: {str(e)}", "data": []}
+    finally:
+        db.close()
+
 @app.get("/api/debug/status")
 def debug_status():
     """调试状态信息"""
