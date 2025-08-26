@@ -1678,7 +1678,7 @@ def get_total_assets():
     """获取OKX账户总资产"""
     try:
         # 检测环境并选择合适的客户端
-        if detect_environment() == 'local':
+        if is_local_environment():
             logger.info("检测到本地环境，使用代理客户端")
             db = next(get_db())
             api_config = get_api_config(db)

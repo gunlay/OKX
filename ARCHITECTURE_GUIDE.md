@@ -112,23 +112,27 @@ python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 
 2. **自动检测**（当环境变量未设置时）
    ```python
-   def detect_environment():
+   def is_local_environment():
        # 1. 环境变量优先
-       env = os.getenv('ENVIRONMENT')
-       if env in ['local', 'production']:
-           return env
+       env_setting = os.getenv('ENVIRONMENT', '').lower()
+       if env_setting == 'local':
+           return True
+       elif env_setting == 'production':
+           return False
        
-       # 2. 自动检测
-       hostname = socket.gethostname().lower()
-       if 'local' in hostname:
-           return 'local'
-       
-       # 3. IP地址检测
-       if is_aws_server_ip() or is_production_ip():
-           return 'production'
-       
-       # 4. 默认本地环境（安全选择）
-       return 'local'
+       # 2. IP地址检测
+       try:
+           import urllib.request
+           with urllib.request.urlopen('http://httpbin.org/ip', timeout=5) as response:
+               data = json.loads(response.read().decode())
+               external_ip = data.get('origin', '')
+               if external_ip == '13.158.74.102':
+                   return False  # 这是AWS服务器
+       except Exception:
+           pass
+           
+       # 3. 默认本地环境（安全选择）
+       return True
    ```
 
 ### 测试验证
@@ -397,6 +401,6 @@ npm run dev
 
 **最后更新**: 2025年8月26日
 **维护者**: CodeBuddy
-**文档版本**: v1.1
+**文档版本**: v1.2
 
 > ⚠️ **重要提醒**: 本文档是系统架构的核心指南，任何架构相关的修改都应该先更新此文档，确保团队成员了解变更内容。
