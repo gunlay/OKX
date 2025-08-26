@@ -19,9 +19,6 @@
       <div class="balance-card">
         <div class="balance-header">
           <h3>OKX账户余额</h3>
-          <span class="balance-refresh" @click="refreshUsdtBalance" :class="{ loading: usdtLoading }">
-            🔄
-          </span>
         </div>
         <div class="balance-content">
           <div class="balance-item">
@@ -247,6 +244,7 @@ export default {
     // 手动刷新数据
     refreshData() {
       this.fetchAssetData(true);
+      this.fetchUsdtBalance();
       // 增加刷新触发器的值，触发资产趋势图表刷新
       this.refreshTrigger++;
     },
@@ -368,9 +366,6 @@ export default {
       }
     },
     
-    async refreshUsdtBalance() {
-      await this.fetchUsdtBalance();
-    },
     
     logout() {
       // 退出登录逻辑
@@ -473,20 +468,6 @@ export default {
   color: #333;
 }
 
-.balance-refresh {
-  cursor: pointer;
-  font-size: 16px;
-  transition: transform 0.3s;
-  user-select: none;
-}
-
-.balance-refresh:hover {
-  transform: scale(1.1);
-}
-
-.balance-refresh.loading {
-  animation: spin 1s linear infinite;
-}
 
 .balance-content {
   padding: 5px 0;
