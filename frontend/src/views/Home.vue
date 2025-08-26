@@ -578,6 +578,11 @@ export default {
   border-bottom: none;
 }
 
+/* 确保总收益项没有下边框 */
+.asset-item:nth-child(3) {
+  border-bottom: none;
+}
+
 .label {
   font-size: 16px;
   color: #666;
