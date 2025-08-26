@@ -1988,6 +1988,15 @@ def get_market_tickers():
         if not selected_coins:
             return {"code": "ERROR", "msg": "未选择任何币种", "data": []}
         
+        # 处理币种格式：如果是 BTC-USDT 格式，转换为 BTC 格式
+        processed_coins = []
+        for coin in selected_coins:
+            if '-USDT' in coin:
+                processed_coins.append(coin.replace('-USDT', ''))
+            else:
+                processed_coins.append(coin)
+        selected_coins = processed_coins
+        
         # 获取API配置
         user_config = db.query(UserConfig).first()
         if not user_config or not user_config.api_key:
