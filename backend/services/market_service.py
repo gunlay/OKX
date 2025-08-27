@@ -79,23 +79,47 @@ class MarketService:
                         try:
                             # 解析价格数据
                             last_price = float(ticker.get('last', 0))
-                            change_24h = float(ticker.get('sodUtc0', 0))
+                            open_24h = float(ticker.get('sodUtc0', 0))  # 24小时前开盘价
                             volume_24h = float(ticker.get('volCcy24h', 0))
+                            high_24h = float(ticker.get('high24h', 0))
+                            low_24h = float(ticker.get('low24h', 0))
                             
-                            # 计算涨跌幅
-                            if last_price > 0 and change_24h != 0:
-                                change_percent = ((last_price - change_24h) / change_24h) * 100
-                            else:
-                                change_percent = 0
+                            # 计算24h涨跌幅
+                            change_24h_percent = 0
+                            if open_24h > 0:
+                                change_24h_percent = ((last_price - open_24h) / open_24h) * 100
+                            
+                            # 计算当日涨跌幅 (使用sodUtc8，北京时间8点开盘价)
+                            open_today = float(ticker.get('sodUtc8', open_24h))
+                            change_today_percent = 0
+                            if open_today > 0:
+                                change_today_percent = ((last_price - open_today) / open_today) * 100
+                            
+                            # 计算距24h最高的距离
+                            distance_from_high = 0
+                            if high_24h > 0:
+                                distance_from_high = ((last_price - high_24h) / high_24h) * 100
+                            
+                            # 计算距24h最低的距离
+                            distance_from_low = 0
+                            if low_24h > 0:
+                                distance_from_low = ((last_price - low_24h) / low_24h) * 100
                             
                             market_data.append({
                                 "symbol": inst_id,
                                 "currency": coin,
                                 "price": last_price,
-                                "change24h": change_percent,
+                                "change24h": round(change_24h_percent, 2),
+                                "changePercent24h": f"{change_24h_percent:+.2f}%",
+                                "changeDaily": round(change_today_percent, 2),
+                                "changePercentDaily": f"{change_today_percent:+.2f}%",
+                                "changeFromHigh": round(distance_from_high, 2),
+                                "changeFromHighPercent": f"{distance_from_high:+.2f}%",
+                                "changeFromLow": round(distance_from_low, 2),
+                                "changeFromLowPercent": f"{distance_from_low:+.2f}%",
                                 "volume24h": volume_24h,
-                                "high24h": float(ticker.get('high24h', 0)),
-                                "low24h": float(ticker.get('low24h', 0)),
+                                "high24h": high_24h,
+                                "low24h": low_24h,
                                 "timestamp": ticker.get('ts', '')
                             })
                             
@@ -150,22 +174,46 @@ class MarketService:
             # 解析行情数据
             try:
                 last_price = float(ticker.get('last', 0))
-                change_24h = float(ticker.get('sodUtc0', 0))
+                open_24h = float(ticker.get('sodUtc0', 0))  # 24小时前开盘价
                 volume_24h = float(ticker.get('volCcy24h', 0))
+                high_24h = float(ticker.get('high24h', 0))
+                low_24h = float(ticker.get('low24h', 0))
                 
-                # 计算涨跌幅
-                if last_price > 0 and change_24h != 0:
-                    change_percent = ((last_price - change_24h) / change_24h) * 100
-                else:
-                    change_percent = 0
+                # 计算24h涨跌幅
+                change_24h_percent = 0
+                if open_24h > 0:
+                    change_24h_percent = ((last_price - open_24h) / open_24h) * 100
+                
+                # 计算当日涨跌幅 (使用sodUtc8，北京时间8点开盘价)
+                open_today = float(ticker.get('sodUtc8', open_24h))
+                change_today_percent = 0
+                if open_today > 0:
+                    change_today_percent = ((last_price - open_today) / open_today) * 100
+                
+                # 计算距24h最高的距离
+                distance_from_high = 0
+                if high_24h > 0:
+                    distance_from_high = ((last_price - high_24h) / high_24h) * 100
+                
+                # 计算距24h最低的距离
+                distance_from_low = 0
+                if low_24h > 0:
+                    distance_from_low = ((last_price - low_24h) / low_24h) * 100
                 
                 result = {
                     "symbol": ticker.get('instId', symbol),
                     "price": last_price,
-                    "change24h": change_percent,
+                    "change24h": round(change_24h_percent, 2),
+                    "changePercent24h": f"{change_24h_percent:+.2f}%",
+                    "changeDaily": round(change_today_percent, 2),
+                    "changePercentDaily": f"{change_today_percent:+.2f}%",
+                    "changeFromHigh": round(distance_from_high, 2),
+                    "changeFromHighPercent": f"{distance_from_high:+.2f}%",
+                    "changeFromLow": round(distance_from_low, 2),
+                    "changeFromLowPercent": f"{distance_from_low:+.2f}%",
                     "volume24h": volume_24h,
-                    "high24h": float(ticker.get('high24h', 0)),
-                    "low24h": float(ticker.get('low24h', 0)),
+                    "high24h": high_24h,
+                    "low24h": low_24h,
                     "timestamp": ticker.get('ts', '')
                 }
                 
