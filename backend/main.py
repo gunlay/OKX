@@ -19,6 +19,9 @@ from models import Base, UserConfig, DCAPlan, Transaction, AssetHistory, encrypt
 from okx_api import OKXClient, get_popular_coins_public
 from proxy_api import OKXProxyClient
 
+# 导入服务
+from services.config_service import ConfigService
+
 # 配置日志
 log_dir = os.path.dirname(os.path.abspath(__file__))
 log_file = os.path.join(log_dir, 'dca_service.log')
@@ -59,6 +62,9 @@ lock = threading.Lock()
 
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
+
+# 初始化服务
+config_service = ConfigService(SessionLocal)
 
 # 环境检测：判断是否为本地开发环境
 def is_local_environment():
@@ -180,18 +186,14 @@ def execute_dca_task(plan_id: int):
                 return
             
             # 获取API配置
-            config = db.query(UserConfig).first()
-            if not config:
-                logger.error(f"任务 {plan_id} 执行失败: 未找到API配置")
+            api_config = config_service.get_decrypted_api_config()
+            if not api_config:
+                logger.error(f"任务 {plan_id} 执行失败: API配置不完整或未找到")
                 return
             
-            api_key = decrypt_text(config.api_key)
-            secret_key = decrypt_text(config.secret_key)
-            passphrase = decrypt_text(config.passphrase)
-            
-            if not api_key or not secret_key or not passphrase:
-                logger.error(f"任务 {plan_id} 执行失败: API配置不完整")
-                return
+            api_key = api_config["api_key"]
+            secret_key = api_config["secret_key"]
+            passphrase = api_config["passphrase"]
             
             # 创建OKX客户端
             client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
@@ -1308,78 +1310,35 @@ def get_transactions(
 # 配置中心相关接口
 @app.post("/api/config/api")
 def save_api_config(config: ApiConfig):
-    db = next(get_db())
-    
-    # 检查是否已有配置
-    existing_config = db.query(UserConfig).first()
-    if existing_config:
-        # 更新现有配置
-        existing_config.api_key = encrypt_text(config.api_key)
-        existing_config.secret_key = encrypt_text(config.secret_key)
-        existing_config.passphrase = encrypt_text(config.passphrase)
-        existing_config.updated_at = datetime.now(TIMEZONE)
-    else:
-        # 创建新配置
-        new_config = UserConfig(
-            api_key=encrypt_text(config.api_key),
-            secret_key=encrypt_text(config.secret_key),
-            passphrase=encrypt_text(config.passphrase)
-        )
-        db.add(new_config)
-    
-    db.commit()
-    return {"message": "API 配置保存成功"}
+    return config_service.save_api_config(
+        api_key=config.api_key,
+        secret_key=config.secret_key,
+        passphrase=config.passphrase
+    )
 
 @app.get("/api/config/api", response_model=ConfigResponse)
 def get_api_config():
-    db = next(get_db())
-    config = db.query(UserConfig).first()
-    
-    if not config:
-        return ConfigResponse()
-    
+    config_data = config_service.get_api_config()
     return ConfigResponse(
-        api_key=decrypt_text(config.api_key),
-        secret_key=decrypt_text(config.secret_key),
-        passphrase=decrypt_text(config.passphrase),
-        selected_coins=json.loads(config.selected_coins) if config.selected_coins else []
+        api_key=config_data["api_key"],
+        secret_key=config_data["secret_key"],
+        passphrase=config_data["passphrase"],
+        selected_coins=config_data["selected_coins"]
     )
 
 @app.post("/api/config/coins")
 def save_coin_config(config: CoinConfig):
-    db = next(get_db())
-    
-    # 检查是否已有配置
-    existing_config = db.query(UserConfig).first()
-    if existing_config:
-        # 更新现有配置
-        existing_config.selected_coins = json.dumps(config.selected_coins)
-        existing_config.updated_at = datetime.now(TIMEZONE)
-    else:
-        # 创建新配置
-        new_config = UserConfig(selected_coins=json.dumps(config.selected_coins))
-        db.add(new_config)
-    
-    db.commit()
-    return {"message": "币种配置保存成功"}
+    return config_service.save_coin_config(config.selected_coins)
 
 @app.get("/api/config/coins", response_model=List[str])
 def get_coin_config():
-    db = next(get_db())
-    config = db.query(UserConfig).first()
-    
-    if not config or not config.selected_coins:
-        return []
-    
-    return json.loads(config.selected_coins)
+    return config_service.get_coin_config()
 
 @app.get("/api/config/popular-coins", response_model=List[str])
 def get_popular_coins(limit: int = 100):
     """获取OKX热门币种列表"""
     try:
-        # 使用公共API获取热门币种（无需API密钥）
-        popular_coins = get_popular_coins_public(limit)
-        return popular_coins
+        return config_service.get_popular_coins(limit)
     except Exception as e:
         logger.exception(f"获取热门币种异常: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取热门币种失败: {str(e)}")
@@ -1387,26 +1346,11 @@ def get_popular_coins(limit: int = 100):
 @app.post("/api/config/test")
 def test_api_connection(config: ApiConfig = Body(...)):
     """测试 OKX API 连接，前端传递 ApiConfig 参数"""
-    try:
-        client = create_okx_client(
-            api_key=config.api_key,
-            secret_key=config.secret_key,
-            passphrase=config.passphrase
-        )
-        result = client.test_connection()
-        if result.get('code') == '0':
-            return {"success": True, "message": "API 连接成功"}
-        else:
-            return {
-                "success": False,
-                "message": f"API 连接失败: {result.get('msg', '未知错误')}",
-                "raw": result
-            }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"后端异常: {str(e)}"
-        }
+    return config_service.test_api_connection(
+        api_key=config.api_key,
+        secret_key=config.secret_key,
+        passphrase=config.passphrase
+    )
 
 # 获取资产概览
 # 资产数据缓存
@@ -1677,49 +1621,19 @@ def get_strategy_info(db):
 def get_total_assets():
     """获取OKX账户总资产"""
     try:
-        # 检测环境并选择合适的客户端
-        if is_local_environment():
-            logger.info("检测到本地环境，使用代理客户端")
-            db = next(get_db())
-            api_config = get_api_config(db)
-            
-            if not api_config:
-                return {"totalAssets": 0, "error": "未配置API密钥"}
-            
-            try:
-                # 解密API密钥
-                decrypted_config = decrypt_api_config(api_config)
-                proxy_client = OKXProxyClient(
-                    api_key=decrypted_config['api_key'],
-                    secret_key=decrypted_config['secret_key'],
-                    passphrase=decrypted_config['passphrase']
-                )
-                result = proxy_client.get_account_balance()
-                logger.info(f"代理OKX账户余额API响应: {result}")
-            except Exception as e:
-                logger.error(f"API密钥解密失败: {str(e)}")
-                return {"totalAssets": 0, "error": "API密钥解密失败"}
-        else:
-            logger.info("检测到生产环境，使用直连客户端")
-            db = next(get_db())
-            api_config = get_api_config(db)
-            
-            if not api_config:
-                return {"totalAssets": 0, "error": "未配置API密钥"}
-            
-            try:
-                # 解密API密钥
-                decrypted_config = decrypt_api_config(api_config)
-                okx_client = OKXClient(
-                    api_key=decrypted_config['api_key'],
-                    secret_key=decrypted_config['secret_key'],
-                    passphrase=decrypted_config['passphrase']
-                )
-                result = okx_client.get_account_balance()
-                logger.info(f"OKX账户余额API响应: {result}")
-            except Exception as e:
-                logger.error(f"API密钥解密失败: {str(e)}")
-                return {"totalAssets": 0, "error": "API密钥解密失败"}
+        # 获取API配置
+        api_config = config_service.get_decrypted_api_config()
+        if not api_config:
+            return {"totalAssets": 0, "error": "未配置API密钥"}
+        
+        # 创建客户端
+        client = create_okx_client(
+            api_key=api_config['api_key'],
+            secret_key=api_config['secret_key'],
+            passphrase=api_config['passphrase']
+        )
+        result = client.get_account_balance()
+        logger.info(f"OKX账户余额API响应: {result}")
         
         # 检查API响应
         if result.get('code') != '0':
@@ -1746,23 +1660,19 @@ def get_total_assets():
 @app.get("/api/account/usdt-balance")
 def get_usdt_balance():
     """获取OKX账户中的USDT余额"""
-    db = next(get_db())
-    config = db.query(UserConfig).first()
-    
-    if not config:
-        return {"balance": 0, "error": "未找到API配置"}
+    # 获取API配置
+    api_config = config_service.get_decrypted_api_config()
+    if not api_config:
+        return {"balance": 0, "error": "API配置不完整"}
     
     try:
-        # 解密API密钥
-        api_key = decrypt_text(config.api_key)
-        secret_key = decrypt_text(config.secret_key)
-        passphrase = decrypt_text(config.passphrase)
-        
-        if not api_key or not secret_key or not passphrase:
-            return {"balance": 0, "error": "API配置不完整"}
         
         # 创建OKX客户端
-        client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
+        client = create_okx_client(
+            api_key=api_config['api_key'], 
+            secret_key=api_config['secret_key'], 
+            passphrase=api_config['passphrase']
+        )
         
         # 获取账户余额 - 使用正确的API调用
         balance_result = client.get_account_balance()
@@ -1827,16 +1737,16 @@ def get_assets_overview(force_refresh: bool = False):
     if not force_refresh and assets_cache["data"] and (current_time - assets_cache["timestamp"]) < assets_cache["ttl"]:
         return assets_cache["data"]
     
-    db = next(get_db())
-    config = db.query(UserConfig).first()
+    # 获取API配置
+    api_config = config_service.get_decrypted_api_config()
     
-    if not config:
+    if not api_config:
         result = {
             "totalAssets": 0,
             "totalInvestment": 0,
             "totalProfit": 0,
             "assetDistribution": [],
-            "error": "未找到API配置，请先在配置中心设置OKX API密钥",
+            "error": "API配置不完整，请先在配置中心设置OKX API密钥",
             "lastUpdated": datetime.now(TIMEZONE).isoformat()
         }
         # 即使没有配置也要缓存结果，避免频繁查询数据库
@@ -1845,24 +1755,9 @@ def get_assets_overview(force_refresh: bool = False):
         return result
     
     try:
-        # 解密API密钥
-        api_key = decrypt_text(config.api_key)
-        secret_key = decrypt_text(config.secret_key)
-        passphrase = decrypt_text(config.passphrase)
-        
-        if not api_key or not secret_key or not passphrase:
-            result = {
-                "totalAssets": 0,
-                "totalInvestment": 0,
-                "totalProfit": 0,
-                "assetDistribution": [],
-                "error": "API配置不完整，请在配置中心完善OKX API密钥信息",
-                "lastUpdated": datetime.now(TIMEZONE).isoformat()
-            }
-            # 缓存错误结果，避免频繁重试
-            assets_cache["data"] = result
-            assets_cache["timestamp"] = current_time
-            return result
+        api_key = api_config["api_key"]
+        secret_key = api_config["secret_key"]
+        passphrase = api_config["passphrase"]
         
         # 创建OKX客户端
         client = create_okx_client(api_key=api_key, secret_key=secret_key, passphrase=passphrase)
@@ -1980,13 +1875,9 @@ def get_market_tickers():
         db = SessionLocal()
         
         # 获取配置的币种列表
-        config = db.query(UserConfig).first()
-        if not config or not config.selected_coins:
-            return {"code": "ERROR", "msg": "未配置交易币种", "data": []}
-        
-        selected_coins = json.loads(config.selected_coins)
+        selected_coins = config_service.get_coin_config()
         if not selected_coins:
-            return {"code": "ERROR", "msg": "未选择任何币种", "data": []}
+            return {"code": "ERROR", "msg": "未配置交易币种", "data": []}
         
         # 处理币种格式：如果是 BTC-USDT 格式，转换为 BTC 格式
         processed_coins = []
@@ -1998,21 +1889,16 @@ def get_market_tickers():
         selected_coins = processed_coins
         
         # 获取API配置
-        user_config = db.query(UserConfig).first()
-        if not user_config or not user_config.api_key:
+        api_config = config_service.get_decrypted_api_config()
+        if not api_config:
             return {"code": "ERROR", "msg": "未配置API密钥", "data": []}
         
-        # 解密API配置
-        try:
-            api_key = decrypt_text(user_config.api_key)
-            secret_key = decrypt_text(user_config.secret_key)
-            passphrase = decrypt_text(user_config.passphrase)
-        except Exception as e:
-            logger.error(f"解密API配置失败: {e}")
-            return {"code": "ERROR", "msg": "API配置解密失败", "data": []}
-        
         # 创建OKX客户端
-        client = create_okx_client(api_key, secret_key, passphrase)
+        client = create_okx_client(
+            api_config['api_key'], 
+            api_config['secret_key'], 
+            api_config['passphrase']
+        )
         
         # 获取所有行情数据
         tickers_result = client.get_tickers('SPOT')
@@ -2102,66 +1988,6 @@ def debug_status():
         "jobs_count": len(scheduler.get_jobs())
     }
 
-@app.get("/api/config/api")
-def get_api_config():
-    """获取API配置"""
-    db = next(get_db())
-    config = db.query(UserConfig).first()
-    
-    if not config:
-        return ConfigResponse()
-    
-    try:
-        api_key = decrypt_text(config.api_key) if config.api_key else ""
-        secret_key = decrypt_text(config.secret_key) if config.secret_key else ""
-        passphrase = decrypt_text(config.passphrase) if config.passphrase else ""
-        selected_coins = json.loads(config.selected_coins) if config.selected_coins else []
-        
-        return ConfigResponse(
-            api_key=api_key,
-            secret_key=secret_key,
-            passphrase=passphrase,
-            selected_coins=selected_coins
-        )
-    except Exception as e:
-        logger.exception(f"获取API配置异常: {str(e)}")
-        return ConfigResponse()
-
-@app.post("/api/config/api")
-def save_api_config(config: ApiConfig):
-    """保存API配置"""
-    db = next(get_db())
-    
-    try:
-        # 加密存储
-        encrypted_api_key = encrypt_text(config.api_key)
-        encrypted_secret_key = encrypt_text(config.secret_key)
-        encrypted_passphrase = encrypt_text(config.passphrase)
-        
-        # 查找现有配置
-        existing_config = db.query(UserConfig).first()
-        
-        if existing_config:
-            # 更新现有配置
-            existing_config.api_key = encrypted_api_key
-            existing_config.secret_key = encrypted_secret_key
-            existing_config.passphrase = encrypted_passphrase
-        else:
-            # 创建新配置
-            new_config = UserConfig(
-                api_key=encrypted_api_key,
-                secret_key=encrypted_secret_key,
-                passphrase=encrypted_passphrase
-            )
-            db.add(new_config)
-        
-        db.commit()
-        return {"message": "API配置保存成功"}
-        
-    except Exception as e:
-        db.rollback()
-        logger.exception(f"保存API配置异常: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")
 
 @app.get("/api/plans")
 def get_dca_plans():
