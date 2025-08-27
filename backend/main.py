@@ -64,9 +64,8 @@ lock = threading.Lock()
 # 创建数据库表
 Base.metadata.create_all(bind=engine)
 
-# 初始化服务
+# 初始化配置服务
 config_service = ConfigService(SessionLocal)
-market_service = MarketService(SessionLocal, config_service, create_okx_client)
 
 # 环境检测：判断是否为本地开发环境
 def is_local_environment():
@@ -107,6 +106,9 @@ def create_okx_client(api_key: str, secret_key: str, passphrase: str):
     else:
         logger.info("检测到生产环境，使用直连客户端")
         return OKXClient(api_key, secret_key, passphrase)
+
+# 初始化市场服务（必须在create_okx_client函数定义之后）
+market_service = MarketService(SessionLocal, config_service, create_okx_client)
 
 # Pydantic 模型
 class DCAPlanCreate(BaseModel):
