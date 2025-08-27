@@ -1764,7 +1764,11 @@ def get_assets_overview(force_refresh: bool = False):
         
         # 1. 计算定投策略的资产价值、投入和收益
         logger.info("开始计算定投策略资产数据")
-        total_assets, assets, total_investment, error = calculate_dca_assets_and_investment(db, client)
+        db = SessionLocal()
+        try:
+            total_assets, assets, total_investment, error = calculate_dca_assets_and_investment(db, client)
+        finally:
+            db.close()
         logger.info(f"资产计算结果: 总资产={total_assets}, 总投入={total_investment}, 资产数量={len(assets)}")
         
         if error:
@@ -1798,7 +1802,11 @@ def get_assets_overview(force_refresh: bool = False):
             })
         
         # 获取策略信息
-        strategy_info = get_strategy_info(db)
+        db_for_strategy = SessionLocal()
+        try:
+            strategy_info = get_strategy_info(db_for_strategy)
+        finally:
+            db_for_strategy.close()
         
         # 构建结果
         result = {
