@@ -67,45 +67,9 @@ Base.metadata.create_all(bind=engine)
 # 初始化配置服务
 config_service = ConfigService(SessionLocal)
 
-# 环境检测：判断是否为本地开发环境
-def is_local_environment():
-    """检测是否为本地开发环境"""
-    # 优先检查环境变量
-    env_setting = os.getenv('ENVIRONMENT', '').lower()
-    if env_setting == 'local':
-        return True
-    elif env_setting == 'production':
-        return False
-    
-    # 如果没有设置环境变量，则通过网络信息判断
-    import socket
-    try:
-        # 检查是否在AWS服务器上（通过IP判断）
-        try:
-            import urllib.request
-            with urllib.request.urlopen('http://httpbin.org/ip', timeout=5) as response:
-                data = json.loads(response.read().decode())
-                external_ip = data.get('origin', '')
-                if external_ip == '13.158.74.102':
-                    return False  # 这是AWS服务器
-        except Exception:
-            pass
-            
-        # 默认认为是本地环境（更安全的选择）
-        return True
-        
-    except Exception:
-        return True
-
-# 创建OKX客户端的工厂函数
-def create_okx_client(api_key: str, secret_key: str, passphrase: str):
-    """根据环境创建合适的OKX客户端"""
-    if is_local_environment():
-        logger.info("检测到本地环境，使用代理客户端")
-        return OKXProxyClient(api_key, secret_key, passphrase)
-    else:
-        logger.info("检测到生产环境，使用直连客户端")
-        return OKXClient(api_key, secret_key, passphrase)
+# 导入工具模块
+from utils.environment import is_local_environment
+from utils.client_factory import create_okx_client
 
 # 初始化市场服务（必须在create_okx_client函数定义之后）
 market_service = MarketService(SessionLocal, config_service, create_okx_client)
