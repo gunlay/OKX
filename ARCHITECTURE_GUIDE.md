@@ -169,6 +169,8 @@ class OKXProxyClient:
 - **环境适配**: 自动检测本地/生产环境，使用相应的API客户端
 - **数据处理**: 自动计算各种涨跌幅和价格对比指标
 - **格式兼容**: 支持BTC和BTC-USDT两种币种格式的自动转换
+- **服务架构**: MarketService负责行情数据业务逻辑，支持依赖注入和环境适配
+- **字段完整性**: 确保前后端字段名匹配，包含格式化显示字段
 
 ### 5. 用户体验
 - **移动端自适应设计**: 响应式布局，支持手机和平板访问
@@ -208,6 +210,26 @@ class OKXProxyClient:
    # 手动设置环境变量
    export ENVIRONMENT=local
    python3 start_local.py
+   ```
+
+4. **MarketService初始化错误**
+   ```bash
+   # 症状：NameError: name 'market_service' is not defined
+   # 原因：MarketService未正确初始化或缺少依赖参数
+   # 检查：确保market_service在create_okx_client函数定义之后初始化
+   # 解决：
+   market_service = MarketService(SessionLocal, config_service, create_okx_client)
+   ```
+
+5. **行情数据字段缺失**
+   ```bash
+   # 症状：前端行情页面某些字段显示为空
+   # 原因：前后端字段名不匹配
+   # 检查：确保后端返回包含以下字段：
+   # - changePercent24h (24h涨跌幅格式化)
+   # - changePercentDaily (当日涨跌幅格式化)
+   # - changeFromHighPercent (距24h最高格式化)
+   # - changeFromLowPercent (距24h最低格式化)
    ```
 
 ### 紧急恢复流程
