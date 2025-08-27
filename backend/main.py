@@ -21,6 +21,7 @@ from proxy_api import OKXProxyClient
 
 # 导入服务
 from services.config_service import ConfigService
+from services.market_service import MarketService
 
 # 配置日志
 log_dir = os.path.dirname(os.path.abspath(__file__))
@@ -65,6 +66,7 @@ Base.metadata.create_all(bind=engine)
 
 # 初始化服务
 config_service = ConfigService(SessionLocal)
+market_service = MarketService(SessionLocal, config_service, create_okx_client)
 
 # 环境检测：判断是否为本地开发环境
 def is_local_environment():
@@ -1879,111 +1881,22 @@ def health_check():
 @app.get("/api/market/tickers")
 def get_market_tickers():
     """获取配置币种的行情数据"""
-    try:
-        db = SessionLocal()
-        
-        # 获取配置的币种列表
-        selected_coins = config_service.get_coin_config()
-        if not selected_coins:
-            return {"code": "ERROR", "msg": "未配置交易币种", "data": []}
-        
-        # 处理币种格式：如果是 BTC-USDT 格式，转换为 BTC 格式
-        processed_coins = []
-        for coin in selected_coins:
-            if '-USDT' in coin:
-                processed_coins.append(coin.replace('-USDT', ''))
-            else:
-                processed_coins.append(coin)
-        selected_coins = processed_coins
-        
-        # 获取API配置
-        api_config = config_service.get_decrypted_api_config()
-        if not api_config:
-            return {"code": "ERROR", "msg": "未配置API密钥", "data": []}
-        
-        # 创建OKX客户端
-        client = create_okx_client(
-            api_config['api_key'], 
-            api_config['secret_key'], 
-            api_config['passphrase']
-        )
-        
-        # 获取所有行情数据
-        tickers_result = client.get_tickers('SPOT')
-        
-        if tickers_result.get('code') != '0':
-            logger.error(f"获取行情数据失败: {tickers_result.get('msg', '未知错误')}")
-            return {"code": "ERROR", "msg": f"获取行情数据失败: {tickers_result.get('msg', '未知错误')}", "data": []}
-        
-        # 筛选配置的币种
-        market_data = []
-        for ticker in tickers_result.get('data', []):
-            inst_id = ticker.get('instId', '')
-            if '-USDT' in inst_id:
-                symbol = inst_id.replace('-USDT', '')
-                if symbol in selected_coins:
-                    try:
-                        current_price = float(ticker.get('last', 0))
-                        open_24h = float(ticker.get('open24h', 0))
-                        
-                        # 计算24小时涨跌幅
-                        if open_24h > 0:
-                            change_24h_percent = ((current_price - open_24h) / open_24h) * 100
-                        else:
-                            change_24h_percent = 0
-                        
-                        # 获取更多字段
-                        high_24h = float(ticker.get('high24h', 0))
-                        low_24h = float(ticker.get('low24h', 0))
-                        sod_utc8 = float(ticker.get('sodUtc8', 0))  # 北京时间0点开盘价
-                        
-                        # 计算当日涨跌幅（基于北京时间0点）
-                        if sod_utc8 > 0:
-                            change_daily_percent = ((current_price - sod_utc8) / sod_utc8) * 100
-                        else:
-                            change_daily_percent = 0
-                        
-                        # 计算当前价格与24小时最高价的涨跌幅
-                        if high_24h > 0:
-                            change_from_high = ((current_price - high_24h) / high_24h) * 100
-                        else:
-                            change_from_high = 0
-                        
-                        # 计算当前价格与24小时最低价的涨跌幅
-                        if low_24h > 0:
-                            change_from_low = ((current_price - low_24h) / low_24h) * 100
-                        else:
-                            change_from_low = 0
-                        
-                        market_data.append({
-                            'symbol': symbol,
-                            'instId': inst_id,
-                            'price': current_price,
-                            'high24h': high_24h,
-                            'low24h': low_24h,
-                            'change24h': change_24h_percent,
-                            'changePercent24h': f"{change_24h_percent:+.2f}%",
-                            'changeDaily': change_daily_percent,
-                            'changePercentDaily': f"{change_daily_percent:+.2f}%",
-                            'changeFromHigh': change_from_high,
-                            'changeFromHighPercent': f"{change_from_high:+.2f}%",
-                            'changeFromLow': change_from_low,
-                            'changeFromLowPercent': f"{change_from_low:+.2f}%"
-                        })
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"解析行情数据失败 {inst_id}: {e}")
-                        continue
-        
-        # 按涨跌幅排序
-        market_data.sort(key=lambda x: x['change24h'], reverse=True)
-        
-        return {"code": "0", "msg": "success", "data": market_data}
-        
-    except Exception as e:
-        logger.error(f"获取行情数据异常: {e}")
-        return {"code": "ERROR", "msg": f"获取行情数据异常: {str(e)}", "data": []}
-    finally:
-        db.close()
+    return market_service.get_configured_coins_market_data()
+
+@app.get("/api/market/ticker/{symbol}")
+def get_ticker_info(symbol: str):
+    """获取单个币种的行情信息"""
+    return market_service.get_ticker_info(symbol)
+
+@app.get("/api/market/summary")
+def get_market_summary():
+    """获取市场概览数据"""
+    return market_service.get_market_summary()
+
+@app.get("/api/market/search")
+def search_coins(keyword: str, limit: int = 20):
+    """搜索币种"""
+    return market_service.search_coins(keyword, limit)
 
 @app.get("/api/debug/status")
 def debug_status():
